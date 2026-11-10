@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowLeft, ArrowRight, Atom, BatteryCharging, BookOpen, Boxes, CarFront,
-  Check, ChevronDown, CircleHelp, Database, Globe2, Menu, Network, Search,
+  Check, ChevronDown, CircleHelp, Database, GitCompare, Globe2, Menu, Network, Search,
   Settings2, ShieldCheck, Sparkles, X, Zap,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -9,18 +9,39 @@ import VehicleMap from './components/VehicleMap';
 import EntityDetails from './components/EntityDetails';
 import TechnologyExplorer from './pages/TechnologyExplorer';
 import DataManagement from './pages/DataManagement';
+import ArchitectureComparison from './pages/ArchitectureComparison';
 import { initialData } from './data/initialData';
 import { readData, readHistory, readLearning, recordChange, saveData, saveLearning } from './services/dataService';
-import type { AppData, ChangeRecord, Entity, Language, LearningData, Propulsion } from './types';
+import { searchEntities } from './services/entitySearch';
+import { getTechnologyRelationLinks } from './services/technologyCatalog';
+import type { AppData, ChangeRecord, Entity, EntityRelation, Language, LearningData, Propulsion, RelationType } from './types';
 import './i18n';
 
-type View = 'architecture' | 'explorer' | 'industry' | 'radar' | 'learning' | 'data';
+type View = 'architecture' | 'explorer' | 'comparison' | 'industry' | 'radar' | 'learning' | 'data';
 const navItems: Array<{ id: View; icon: typeof CarFront }> = [
-  { id: 'architecture', icon: CarFront }, { id: 'explorer', icon: Atom }, { id: 'industry', icon: Boxes },
+  { id: 'architecture', icon: CarFront }, { id: 'explorer', icon: Atom }, { id: 'comparison', icon: GitCompare }, { id: 'industry', icon: Boxes },
   { id: 'radar', icon: Activity }, { id: 'learning', icon: BookOpen }, { id: 'data', icon: Database },
 ];
 const propulsionTypes: Propulsion[] = ['ICE', 'BEV', 'HEV', 'PHEV', 'EREV', 'FCEV'];
 const categories = ['system', 'ecu', 'sensor', 'actuator', 'hardware', 'network', 'technology', 'standard', 'company'] as const;
+const relationTypes: RelationType[] = ['related_to', 'contains', 'part_of', 'controls', 'monitors', 'communicates_with', 'connected_to', 'powered_by', 'distributes_power_to', 'depends_on', 'implements', 'uses', 'integrates', 'transports', 'defines'];
+const relationTypeLabels: Record<RelationType, { zh: string; en: string }> = {
+  related_to: { zh: '关联（语义未标注）', en: 'Related (unspecified)' },
+  contains: { zh: '包含', en: 'Contains' },
+  part_of: { zh: '属于', en: 'Part of' },
+  controls: { zh: '控制', en: 'Controls' },
+  monitors: { zh: '监测', en: 'Monitors' },
+  communicates_with: { zh: '通信', en: 'Communicates with' },
+  connected_to: { zh: '连接', en: 'Connected to' },
+  powered_by: { zh: '由其供电', en: 'Powered by' },
+  distributes_power_to: { zh: '向其供电', en: 'Distributes power to' },
+  depends_on: { zh: '依赖', en: 'Depends on' },
+  implements: { zh: '实现', en: 'Implements' },
+  uses: { zh: '使用', en: 'Uses' },
+  integrates: { zh: '集成', en: 'Integrates' },
+  transports: { zh: '承载 / 传输', en: 'Transports' },
+  defines: { zh: '定义', en: 'Defines' },
+};
 const categoryColors: Record<string, string> = { system: '#18b6a8', ecu: '#6395e9', sensor: '#aa84e9', actuator: '#ee9c54', hardware: '#d7b747', network: '#45b9d1', technology: '#6ec47b', standard: '#ce76ad', company: '#8393a8' };
 
 function safeHistory(): ChangeRecord[] { try { return readHistory(); } catch { return []; } }
@@ -40,8 +61,13 @@ export default function App() {
   const [selectedSystem, setSelectedSystem] = useState<string | null>(null);
   const [selectedEcu, setSelectedEcu] = useState<string | null>(null);
   const [visibleCategories, setVisibleCategories] = useState<string[]>(['system', 'ecu', 'sensor', 'actuator', 'hardware', 'network', 'technology', 'standard']);
+  const [visibleRelationTypes, setVisibleRelationTypes] = useState<RelationType[]>(relationTypes);
+  const [selectedRelationship, setSelectedRelationship] = useState<{ source: Entity; target: Entity; relation: EntityRelation } | null>(null);
   const [mapSearch, setMapSearch] = useState('');
   const [headerSearch, setHeaderSearch] = useState('');
+  const [searchCategory, setSearchCategory] = useState('all');
+  const [searchPropulsion, setSearchPropulsion] = useState('');
+  const [searchEeArchitecture, setSearchEeArchitecture] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [resetSignal, setResetSignal] = useState(0);
   const [toast, setToast] = useState(stored.warning ?? '');
@@ -79,7 +105,11 @@ export default function App() {
     ?? data.architectures[0] ?? initialData.architectures[0];
   const architectureVariants = data.architectures.filter((item) => item.propulsion === propulsion && item.reviewStatus === 'Approved');
   const selected = selectedId ? entityById.get(selectedId) : undefined;
-  const searchResults = headerSearch.trim() ? data.entities.filter((entity) => `${entity.name.en} ${entity.name.zh} ${entity.id}`.toLocaleLowerCase().includes(headerSearch.trim().toLocaleLowerCase())).slice(0, 7) : [];
+  const searchResults = searchEntities(data, headerSearch, {
+    category: searchCategory as typeof categories[number] | 'all',
+    propulsion: searchPropulsion as Propulsion | '',
+    eeArchitecture: searchEeArchitecture as AppData['architectures'][number]['eeArchitecture'] | '',
+  });
 
   const persistData = (next: AppData) => {
     try { saveData(next); setData(next); }
@@ -190,11 +220,12 @@ export default function App() {
     return true;
   };
   const changePropulsion = (id: Propulsion) => {
-    setPropulsion(id); setSelectedArchitectureId(null); setSelectedSystem(null); setSelectedEcu(null); setSelectedId(null); setMapSearch('');
+    setPropulsion(id); setSelectedArchitectureId(null); setSelectedSystem(null); setSelectedEcu(null); setSelectedId(null); setSelectedRelationship(null); setMapSearch('');
   };
   const navigateToEntity = (id: string) => {
     const entity = entityById.get(id);
     if (!entity) return;
+    setSelectedRelationship(null);
     setSelectedId(id);
     if (entity.category === 'system' || entity.category === 'ecu' || entity.category === 'network') {
       setView('architecture');
@@ -209,10 +240,64 @@ export default function App() {
     }
     setHeaderSearch(''); setShowSearchResults(false);
   };
+  const openTechnologyOnMap = (id: string) => {
+    const technology = entityById.get(id);
+    if (!technology) return;
+    const mapped = getTechnologyRelationLinks(technology, data.entities)
+      .map((link) => link.entity)
+      .find((entity) => ['system', 'ecu', 'network'].includes(entity.category));
+    if (!mapped) {
+      setToast(language === 'zh' ? '该技术尚无可定位到整车架构图的系统、ECU 或网络关联。' : 'This technology has no system, ECU, or network link to locate on the vehicle map.');
+      return;
+    }
+    if (mapped.appliesTo?.includes(propulsion) === false && mapped.appliesTo?.length) setPropulsion(mapped.appliesTo[0]);
+    setSelectedRelationship(null);
+    setSelectedId(mapped.id);
+    if (mapped.category === 'system') { setSelectedSystem(mapped.id); setSelectedEcu(null); }
+    else if (mapped.category === 'ecu') {
+      const parent = mapped.relatesTo.find((item) => architecture.systemIds.includes(item));
+      setSelectedSystem(parent ?? null);
+      setSelectedEcu(mapped.id);
+    } else { setSelectedSystem(null); setSelectedEcu(null); }
+    setView('architecture');
+  };
+  const selectMapEntity = (id: string) => {
+    setSelectedRelationship(null);
+    setSelectedId(id || null);
+  };
+  const selectRelationship = (sourceId: string, targetId: string, type: RelationType) => {
+    const source = entityById.get(sourceId);
+    const target = entityById.get(targetId);
+    if (!source || !target) return;
+    const relation = source.relations?.find((item) => item.targetId === targetId && item.type === type) ?? {
+      targetId,
+      type,
+      description: { zh: '旧版关联未记录关系语义。', en: 'Legacy link; relationship semantics were not recorded.' },
+    };
+    setSelectedRelationship({ source, target, relation });
+    setSelectedId(targetId);
+  };
+  const openComparedArchitecture = (nextPropulsion: Propulsion, ee?: AppData['architectures'][number]['eeArchitecture']) => {
+    const target = data.architectures.find((item) => item.propulsion === nextPropulsion
+      && item.reviewStatus === 'Approved' && (!ee || item.eeArchitecture === ee))
+      ?? data.architectures.find((item) => item.propulsion === nextPropulsion && item.reviewStatus === 'Approved');
+    if (!target) {
+      setToast(language === 'zh' ? '找不到对应的已审核参考架构。' : 'No approved reference architecture is available.');
+      return;
+    }
+    setPropulsion(target.propulsion);
+    setSelectedArchitectureId(target.id);
+    setSelectedSystem(null); setSelectedEcu(null); setSelectedId(null); setSelectedRelationship(null);
+    setView('architecture');
+  };
 
   const localizedPropulsion = (id: Propulsion) => data.architectures.find((item) => item.propulsion === id && item.reviewStatus === 'Approved')?.name[language] ?? id;
   const activeSystem = selectedSystem ? entityById.get(selectedSystem) : undefined;
   const activeEcu = selectedEcu ? entityById.get(selectedEcu) : undefined;
+  const availableRelationTypes = Array.from(new Set(data.entities.flatMap((entity) => {
+    const explicit = entity.relations?.map((relation) => relation.type) ?? [];
+    return [...explicit, ...entity.relatesTo.filter((id) => !entity.relations?.some((relation) => relation.targetId === id)).map(() => 'related_to' as const)];
+  })));
   const labelCategory = (category: string) => ({
     system: language === 'zh' ? '车辆系统' : 'Vehicle systems',
     ecu: language === 'zh' ? 'ECU / 功能单元' : 'ECUs / Functional units',
@@ -233,7 +318,12 @@ export default function App() {
         <div className="header-search-wrap">
           <div className="global-search"><Search size={16} /><input ref={globalSearchRef} value={headerSearch} onFocus={() => setShowSearchResults(true)} onChange={(event) => { setHeaderSearch(event.target.value); setShowSearchResults(true); }} placeholder={t('search')} /><kbd>Ctrl K</kbd></div>
           {showSearchResults && headerSearch && <div className="search-dropdown">
-            {searchResults.map((entity) => <button key={entity.id} onClick={() => navigateToEntity(entity.id)}><span className="mini-dot" style={{ background: categoryColors[entity.category] }} /><span>{entity.name[language] || entity.name.en}<small>{entity.category} · {entity.id}</small></span><ArrowRight size={14} /></button>)}
+            <div className="global-search-filters">
+              <label>{language === 'zh' ? '实体类型' : 'Entity type'}<select value={searchCategory} onChange={(event) => setSearchCategory(event.target.value)}><option value="all">{language === 'zh' ? '全部' : 'All'}</option>{categories.map((category) => <option value={category} key={category}>{labelCategory(category)}</option>)}</select></label>
+              <label>{language === 'zh' ? '动力类型' : 'Powertrain'}<select value={searchPropulsion} onChange={(event) => setSearchPropulsion(event.target.value)}><option value="">{language === 'zh' ? '全部' : 'All'}</option>{propulsionTypes.map((id) => <option value={id} key={id}>{id}</option>)}</select></label>
+              <label>E/E<select value={searchEeArchitecture} onChange={(event) => setSearchEeArchitecture(event.target.value)}><option value="">{language === 'zh' ? '全部' : 'All'}</option>{['Distributed', 'Domain', 'Zonal', 'Centralized'].map((id) => <option value={id} key={id}>{id === 'Centralized' ? 'Centralized Computing' : id}</option>)}</select></label>
+            </div>
+            {searchResults.map((entity) => <button key={entity.id} onClick={() => navigateToEntity(entity.id)}><span className="mini-dot" style={{ background: categoryColors[entity.category] }} /><span>{entity.name[language] || entity.name.en}<small>{labelCategory(entity.category)} · {entity.id}</small></span><ArrowRight size={14} /></button>)}
             {!searchResults.length && <div className="search-no-result">{t('noResults')}</div>}
             <button className="search-dismiss" onClick={() => setShowSearchResults(false)}>{t('clearSearch')}</button>
           </div>}
@@ -249,7 +339,7 @@ export default function App() {
         <aside className={`sidebar${sidebarOpen ? ' sidebar-open' : ''}`}>
           <div className="workspace-switch"><div className="workspace-icon">A</div><span><b>Workspace</b><small>{language === 'zh' ? '本地知识库' : 'Local knowledge base'}</small></span><ChevronDown size={14} /></div>
           <div className="nav-section-label">{language === 'zh' ? '工作区' : 'WORKSPACE'}</div>
-          <nav>{navItems.map(({ id, icon: Icon }) => <button key={id} onClick={() => { setView(id); setSidebarOpen(false); }} className={`nav-item${view === id ? ' active' : ''}`}><Icon size={17} /><span>{t(id)}</span>{id === 'data' && data.entities.some((item) => item.reviewStatus === 'Pending Review') && <i className="nav-count">{data.entities.filter((item) => item.reviewStatus === 'Pending Review').length}</i>}</button>)}</nav>
+          <nav>{navItems.map(({ id, icon: Icon }) => <button key={id} onClick={() => { setView(id); setSidebarOpen(false); setShowSearchResults(false); }} className={`nav-item${view === id ? ' active' : ''}`}><Icon size={17} /><span>{t(id)}</span>{id === 'data' && data.entities.some((item) => item.reviewStatus === 'Pending Review') && <i className="nav-count">{data.entities.filter((item) => item.reviewStatus === 'Pending Review').length}</i>}</button>)}</nav>
           <div className="sidebar-bottom">
             <div className="sidebar-divider" />
             <div className="coverage-card"><div className="coverage-icon"><Network size={15} /></div><div><b>{language === 'zh' ? '知识图谱覆盖' : 'Graph coverage'}</b><span>{data.entities.length} {language === 'zh' ? '个实体' : 'entities'} · {data.architectures.length} architectures</span></div></div>
@@ -285,18 +375,24 @@ export default function App() {
             <div className="map-workspace">
               <section className="map-stage panel-card">
                 <div className="map-legend"><span><i style={{ background: categoryColors.system }} />{labelCategory('system')}</span><span><i style={{ background: categoryColors.ecu }} />{labelCategory('ecu')}</span><span><i style={{ background: categoryColors.network }} />{labelCategory('network')}</span><span className="legend-hint">{language === 'zh' ? '参考拓扑分组，不表示具体车型安装位置 · 点击系统或 ECU 查看关系' : 'Reference topology grouping, not vehicle mounting locations · select a system or ECU to inspect links'}</span></div>
-                <VehicleMap architecture={architecture} entities={data.entities.filter((entity) => entity.reviewStatus === 'Approved')} language={language} selectedSystem={selectedSystem} selectedEcu={selectedEcu} selectedId={selectedId} visibleCategories={visibleCategories} onSelect={setSelectedId} onSystem={setSelectedSystem} onEcu={setSelectedEcu} onEdge={setSelectedId} search={mapSearch} resetSignal={resetSignal} />
+                <VehicleMap architecture={architecture} entities={data.entities.filter((entity) => entity.reviewStatus === 'Approved')} language={language} selectedSystem={selectedSystem} selectedEcu={selectedEcu} selectedId={selectedId} visibleCategories={visibleCategories} visibleRelationTypes={visibleRelationTypes} onSelect={selectMapEntity} onSystem={setSelectedSystem} onEcu={setSelectedEcu} onEdge={selectRelationship} selectedRelationKey={selectedRelationship ? `link:${selectedRelationship.source.id}:${selectedRelationship.target.id}:${selectedRelationship.relation.type}` : null} search={mapSearch} resetSignal={resetSignal} />
                 <div className="map-scale"><span className="live-dot" />{language === 'zh' ? '参考拓扑 · 交互视图' : 'Reference topology · interactive view'}<span className="scale-divider" />{selectedSystem ? language === 'zh' ? '系统级探索' : 'System exploration' : language === 'zh' ? '整车总览' : 'Vehicle overview'}</div>
               </section>
               <aside className="layers-panel panel-card"><div className="panel-title"><span>{t('layers')}</span><button className="text-button" onClick={() => setVisibleCategories([...categories])}>{t('showAll')}</button></div>
                 <div className="layer-list">{categories.map((category) => <label key={category} className="layer-toggle"><span className="layer-color" style={{ background: categoryColors[category] }} /><span>{labelCategory(category)}</span><input type="checkbox" checked={visibleCategories.includes(category)} onChange={(event) => setVisibleCategories((items) => event.target.checked ? [...items, category] : items.filter((item) => item !== category))} /><i /></label>)}</div>
+                <details className="relationship-filter">
+                  <summary>{language === 'zh' ? '关系类型' : 'Relationship types'}</summary>
+                  <button className="text-button" onClick={() => setVisibleRelationTypes((current) => availableRelationTypes.every((type) => current.includes(type)) ? [] : availableRelationTypes)}>{language === 'zh' ? '全选 / 清空' : 'Select all / none'}</button>
+                  {availableRelationTypes.map((type) => <label key={type}><input type="checkbox" checked={visibleRelationTypes.includes(type)} onChange={(event) => setVisibleRelationTypes((current) => event.target.checked ? [...current, type] : current.filter((item) => item !== type))} /><span>{relationTypeLabels[type][language]}</span></label>)}
+                </details>
                 <div className="layer-tip"><ShieldCheck size={14} /><span>{language === 'zh' ? '仅显示已审核的参考实体' : 'Only approved reference entities shown'}</span></div>
               </aside>
-              <EntityDetails entity={selected} entities={data.entities} language={language} favorite={selected ? learning.favorites.includes(selected.id) : false} onFavorite={() => selected && toggleFavorite(selected.id)} onSelectRelated={navigateToEntity} />
+              <EntityDetails entity={selected} entities={data.entities} language={language} favorite={selected ? learning.favorites.includes(selected.id) : false} onFavorite={() => selected && toggleFavorite(selected.id)} onSelectRelated={navigateToEntity} relationship={selectedRelationship} />
             </div>
           </div>}
 
-          {view === 'explorer' && <TechnologyExplorer entities={data.entities} language={language} favorites={learning.favorites} onFavorite={toggleFavorite} onSelect={setSelectedId} focusEntityId={selectedId} onLearn={(id) => { toggleFavorite(id); setView('learning'); }} />}
+          {view === 'explorer' && <TechnologyExplorer entities={data.entities} language={language} favorites={learning.favorites} onFavorite={toggleFavorite} onSelect={navigateToEntity} onOpenMap={openTechnologyOnMap} focusEntityId={selectedId} onLearn={(id) => { toggleFavorite(id); setView('learning'); }} />}
+          {view === 'comparison' && <ArchitectureComparison data={data} language={language} onSelectEntity={navigateToEntity} onOpenArchitecture={openComparedArchitecture} />}
           {view === 'industry' && <IndustryPage entities={data.entities} language={language} onSelect={navigateToEntity} />}
           {view === 'radar' && <RadarPage entities={data.entities} language={language} onSelect={navigateToEntity} />}
           {view === 'learning' && <LearningPage entities={data.entities} language={language} learning={learning} onFavorite={toggleFavorite} onSaveNote={saveNote} onSelect={navigateToEntity} />}

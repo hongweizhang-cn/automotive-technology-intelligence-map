@@ -1,7 +1,10 @@
 import { useMemo, useRef, useState } from 'react';
 import { Check, Download, FileUp, History, Plus, Search, Trash2, X } from 'lucide-react';
-import type { AppData, Architecture, ChangeRecord, Entity, EntityCategory, EntityRelation, EvidenceSource, Propulsion, RelationType, ReviewStatus, VerificationStatus } from '../types';
+import type { AppData, Architecture, ArchitectureComparisonDimension, ChangeRecord, ComparisonEntryStatus, Entity, EntityCategory, EntityRelation, EvidenceSource, Propulsion, RelationType, ReviewStatus, TechnologyDetails, TechnologyDomain, VerificationStatus } from '../types';
 import { validateImport } from '../services/dataService';
+import { checkDataQuality, qualityIssueMessage } from '../services/dataQuality';
+import { comparisonDimensions } from '../services/comparisonDimensions';
+import { technologyDomains } from '../services/technologyCatalog';
 
 interface Props {
   data: AppData;
@@ -16,8 +19,14 @@ interface Props {
 
 const categories: EntityCategory[] = ['system', 'ecu', 'sensor', 'actuator', 'hardware', 'network', 'technology', 'standard', 'company'];
 const statuses: ReviewStatus[] = ['Draft', 'Pending Review', 'Approved', 'Rejected'];
-const relationTypes: RelationType[] = ['related_to', 'contains', 'part_of', 'controls', 'monitors', 'communicates_with', 'connected_to', 'powered_by', 'distributes_power_to', 'depends_on', 'implements', 'uses', 'integrates'];
+const relationTypes: RelationType[] = ['related_to', 'contains', 'part_of', 'controls', 'monitors', 'communicates_with', 'connected_to', 'powered_by', 'distributes_power_to', 'depends_on', 'implements', 'uses', 'integrates', 'transports', 'defines'];
 const verificationStatuses: VerificationStatus[] = ['Unverified', 'Pending Verification', 'Verified'];
+const technologyDetailFields: Array<[Exclude<keyof TechnologyDetails, 'domain' | 'applicableArchitectures'>, string, string]> = [
+  ['subdomain', '子分类', 'Subdomain'], ['layer', '技术层级 / 所属体系', 'Layer / system'],
+  ['definition', '定义', 'Definition'], ['purpose', '主要用途', 'Purpose'], ['mechanism', '工作原理', 'How it works'],
+  ['keyFeatures', '关键技术特性', 'Key characteristics'], ['useCases', '典型应用场景', 'Typical use cases'],
+  ['advantages', '优势', 'Advantages'], ['limitations', '局限', 'Limitations'],
+];
 const toLocalDateTime = (value?: string) => {
   const date = value ? new Date(value) : undefined;
   return date && Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 16) : '';
@@ -38,6 +47,7 @@ export default function DataManagement({ data, history, language, onSave, onDele
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const t = (zh: string, en: string) => language === 'zh' ? zh : en;
+  const quality = useMemo(() => checkDataQuality(data), [data]);
   const filtered = useMemo(() => data.entities.filter((entity) => {
     const matchesText = `${entity.id} ${entity.name.zh} ${entity.name.en}`.toLocaleLowerCase().includes(query.toLocaleLowerCase());
     return matchesText && (filter === 'all' || entity.category === filter || entity.reviewStatus === filter);
@@ -47,6 +57,16 @@ export default function DataManagement({ data, history, language, onSave, onDele
   const startEdit = (entity: Entity) => { setEditing({ ...entity, name: { ...entity.name }, description: { ...entity.description }, relatesTo: [...entity.relatesTo] }); setIsNew(false); setError(''); };
   const updateText = (key: 'name' | 'description', locale: 'zh' | 'en', value: string) => {
     setEditing((current) => current ? { ...current, [key]: { ...current[key], [locale]: value } } : current);
+  };
+  const updateTechnologyText = (key: Exclude<keyof TechnologyDetails, 'domain' | 'applicableArchitectures'>, locale: 'zh' | 'en', value: string) => {
+    setEditing((current) => current ? {
+      ...current,
+      technologyDetails: {
+        ...current.technologyDetails,
+        domain: current.technologyDetails?.domain ?? 'vehicle-communication',
+        [key]: { ...current.technologyDetails?.[key], [locale]: value },
+      },
+    } : current);
   };
   const updateRelation = (index: number, patch: Partial<EntityRelation>) => {
     setEditing((current) => {
@@ -115,7 +135,7 @@ export default function DataManagement({ data, history, language, onSave, onDele
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url; anchor.download = 'automotive-technology-map.json'; anchor.click();
-      URL.revokeObjectURL(url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (reason) { setError(`${t('导出失败：', 'Export failed: ')}${String(reason)}`); }
   };
   const importJson = async (file?: File) => {
@@ -147,6 +167,21 @@ export default function DataManagement({ data, history, language, onSave, onDele
         <button className={mode === 'entities' ? 'active' : ''} onClick={() => { setMode('entities'); setShowHistory(false); }}>{language === 'zh' ? '实体' : 'Entities'} <span>{data.entities.length}</span></button>
         <button className={mode === 'architectures' ? 'active' : ''} onClick={() => { setMode('architectures'); setShowHistory(false); }}>{language === 'zh' ? '车辆架构' : 'Vehicle architectures'} <span>{data.architectures.length}</span></button>
       </div>
+      <section className="quality-summary">
+        {[
+          [t('实体总数', 'Total entities'), quality.totalEntities],
+          [t('关系总数', 'Total relationships'), quality.totalRelationships],
+          [t('待审核', 'Pending review'), quality.pendingReview],
+          [t('来源未核实', 'Unverified sources'), quality.unverifiedSources],
+          [t('信息缺失', 'Missing information'), quality.missingInformation],
+          [t('质量问题', 'Data quality issues'), quality.issues.length],
+        ].map(([label, count]) => <div className="panel-card quality-stat" key={String(label)}><strong>{count}</strong><span>{label}</span></div>)}
+      </section>
+      {quality.issues.length > 0 && <details className="quality-issues panel-card">
+        <summary>{t('查看数据质量问题', 'Review data quality issues')} <span>{quality.issues.length}</span></summary>
+        <ul>{quality.issues.slice(0, 30).map((issue, index) => <li key={`${issue.key}-${issue.entityId}-${index}`}><code>{issue.entityId}</code>{qualityIssueMessage(issue, language)}</li>)}</ul>
+        {quality.issues.length > 30 && <p>{t(`另有 ${quality.issues.length - 30} 项未显示`, `${quality.issues.length - 30} more issues not shown`)}</p>}
+      </details>}
       {error && <div className="notice error-notice"><span>{error}</span><button className="icon-btn" onClick={() => setError('')}><X size={15} /></button></div>}
       {mode === 'architectures' ? <ArchitectureManagement data={data} language={language} onSave={onSaveArchitecture} onDelete={onDeleteArchitecture} /> : <>
       {showHistory ? <section className="panel-card history-panel"><div className="section-title"><h2>{t('修改历史', 'Change history')}</h2><span>{history.length} {t('条记录', 'records')}</span></div>
@@ -172,7 +207,10 @@ export default function DataManagement({ data, history, language, onSave, onDele
             <div className="section-title"><h2>{isNew ? t('新增实体', 'New entity') : t('编辑实体', 'Edit entity')}</h2><button className="icon-btn" onClick={() => setEditing(null)}><X size={16} /></button></div>
             <form onSubmit={submit}>
               <label>{t('ID', 'ID')}<input value={editing.id} disabled={!isNew} onChange={(event) => setEditing({ ...editing, id: event.target.value })} placeholder="ecu-example" /></label>
-              <label>{t('实体类型', 'Entity type')}<select value={editing.category} onChange={(event) => setEditing({ ...editing, category: event.target.value as EntityCategory })}>{categories.map((item) => <option value={item} key={item}>{item}</option>)}</select></label>
+              <label>{t('实体类型', 'Entity type')}<select value={editing.category} onChange={(event) => {
+                const nextCategory = event.target.value as EntityCategory;
+                setEditing({ ...editing, category: nextCategory, technologyDetails: nextCategory === 'technology' ? editing.technologyDetails : undefined });
+              }}>{categories.map((item) => <option value={item} key={item}>{item}</option>)}</select></label>
               <div className="form-grid"><label>{t('中文名称', 'Name (Chinese)')}<input value={editing.name.zh} onChange={(event) => updateText('name', 'zh', event.target.value)} /></label>
                 <label>{t('英文名称', 'Name (English)')}<input value={editing.name.en} onChange={(event) => updateText('name', 'en', event.target.value)} /></label></div>
               <div className="form-grid"><label>{t('中文说明', 'Description (Chinese)')}<textarea rows={3} value={editing.description.zh} onChange={(event) => updateText('description', 'zh', event.target.value)} /></label>
@@ -192,6 +230,20 @@ export default function DataManagement({ data, history, language, onSave, onDele
                 <button type="button" className="button-quiet" onClick={() => setEditing({ ...editing, relations: (editing.relations ?? []).filter((_, itemIndex) => itemIndex !== index), relatesTo: (editing.relations ?? []).filter((_, itemIndex) => itemIndex !== index).map((item) => item.targetId) })}>{t('移除此关系', 'Remove relationship')}</button>
               </div>)}
               <label>{language === 'zh' ? '适用动力类型（逗号分隔，留空表示通用）' : 'Applicable propulsion types (comma separated; blank means shared)'}<input value={editing.appliesTo?.join(', ') ?? ''} onChange={(event) => setEditing({ ...editing, appliesTo: event.target.value.trim() ? event.target.value.split(',').map((item) => item.trim().toUpperCase() as Propulsion) : undefined })} placeholder="BEV, PHEV" /></label>
+              {editing.category === 'technology' && <section className="technology-profile-editor">
+                <h3>{t('技术分类与详情', 'Technology classification and details')}</h3>
+                <label>{t('技术分类', 'Technology domain')}<select value={editing.technologyDetails?.domain ?? 'vehicle-communication'} onChange={(event) => setEditing({ ...editing, technologyDetails: { ...editing.technologyDetails, domain: event.target.value as TechnologyDomain } })}>
+                  {technologyDomains.map((item) => <option value={item.id} key={item.id}>{item.label[language]}</option>)}
+                </select></label>
+                {technologyDetailFields.map(([key, zh, en]) => <div className="form-grid" key={key}>
+                  <label>{t(`${zh}（中文）`, `${en} (Chinese)`)}<textarea rows={2} value={editing.technologyDetails?.[key]?.zh ?? ''} onChange={(event) => updateTechnologyText(key, 'zh', event.target.value)} /></label>
+                  <label>{t(`${zh}（英文）`, `${en} (English)`)}<textarea rows={2} value={editing.technologyDetails?.[key]?.en ?? ''} onChange={(event) => updateTechnologyText(key, 'en', event.target.value)} /></label>
+                </div>)}
+                <label>{t('适用架构（逗号分隔）', 'Applicable architectures (comma separated)')}<input value={editing.technologyDetails?.applicableArchitectures?.join(', ') ?? ''} onChange={(event) => setEditing({ ...editing, technologyDetails: {
+                  ...editing.technologyDetails, domain: editing.technologyDetails?.domain ?? 'vehicle-communication',
+                  applicableArchitectures: event.target.value.split(',').map((item) => item.trim()).filter(Boolean),
+                } })} /></label>
+              </section>}
               <div className="section-title"><h3>{t('证据来源', 'Evidence sources')}</h3><button type="button" className="button-secondary" onClick={addSource}><Plus size={14} />{t('添加来源', 'Add source')}</button></div>
               {(editing.sources ?? []).map((source, index) => <div className="panel-card source-editor" key={source.id}>
                 <div className="form-grid"><label>{t('来源标题（中文）', 'Source title (Chinese)')}<input value={source.title.zh} onChange={(event) => updateSource(index, { title: { ...source.title, zh: event.target.value } })} /></label>
@@ -199,6 +251,7 @@ export default function DataManagement({ data, history, language, onSave, onDele
                 <label>{t('来源 URL', 'Source URL')}<input type="url" value={source.url ?? ''} onChange={(event) => updateSource(index, { url: event.target.value || undefined })} placeholder="https://" /></label>
                 <div className="form-grid"><label>{t('来源类型', 'Source type')}<input value={source.type} onChange={(event) => updateSource(index, { type: event.target.value })} placeholder="Standard / Official documentation" /></label>
                   <label>{t('发布机构', 'Publisher')}<input value={source.publisher ?? ''} onChange={(event) => updateSource(index, { publisher: event.target.value || undefined })} /></label></div>
+                <label>{t('发布日期（可确认时）', 'Publication date (when known)')}<input value={source.publicationDate ?? ''} onChange={(event) => updateSource(index, { publicationDate: event.target.value || undefined })} placeholder="YYYY-MM-DD" /></label>
                 <label>{t('获取时间', 'Accessed at')}<input type="datetime-local" value={toLocalDateTime(source.accessedAt)} onChange={(event) => updateSource(index, { accessedAt: event.target.value ? new Date(event.target.value).toISOString() : undefined })} /></label>
                 <label>{t('证据说明（中文）', 'Evidence note (Chinese)')}<input value={source.note?.zh ?? ''} onChange={(event) => updateSource(index, { note: { zh: event.target.value, en: source.note?.en ?? '' } })} /></label>
                 <label>{t('证据说明（英文）', 'Evidence note (English)')}<input value={source.note?.en ?? ''} onChange={(event) => updateSource(index, { note: { zh: source.note?.zh ?? '', en: event.target.value } })} /></label>
@@ -253,6 +306,23 @@ function ArchitectureManagement({ data, language, onSave, onDelete }: {
   const setLocalized = (field: 'name' | 'topology', locale: 'zh' | 'en', value: string) => {
     setEditing((current) => current ? { ...current, [field]: { ...current[field], [locale]: value } } : current);
   };
+  const setComparisonEntry = (dimension: ArchitectureComparisonDimension, patch: { status?: ComparisonEntryStatus; locale?: 'zh' | 'en'; value?: string }) => {
+    setEditing((current) => {
+      if (!current) return current;
+      const currentEntry = current.comparisonProfile?.[dimension] ?? { status: 'Not Available' as const, value: { zh: '', en: '' } };
+      const status = patch.status ?? currentEntry.status;
+      const value = status === 'Available' && patch.locale
+        ? { ...currentEntry.value, [patch.locale]: patch.value ?? '' }
+        : status === 'Available' ? currentEntry.value : { zh: '', en: '' };
+      return {
+        ...current,
+        comparisonProfile: {
+          ...current.comparisonProfile,
+          [dimension]: { status, value },
+        },
+      };
+    });
+  };
   const toggleId = (key: 'systemIds' | 'ecuIds', id: string) => {
     setEditing((current) => current ? { ...current, [key]: current[key].includes(id) ? current[key].filter((value) => value !== id) : [...current[key], id] } : current);
   };
@@ -268,6 +338,11 @@ function ArchitectureManagement({ data, language, onSave, onDelete }: {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(architecture.id)) { setError(t('ID 仅允许小写字母、数字和连字符。', 'ID must use lowercase letters, numbers, and hyphens.')); return; }
     if (!architecture.name.zh.trim() || !architecture.name.en.trim() || !architecture.topology.zh.trim() || !architecture.topology.en.trim()) {
       setError(t('请填写中英文架构名称与动力拓扑说明。', 'Provide Chinese and English architecture names and topology descriptions.')); return;
+    }
+    if (Object.entries(architecture.comparisonProfile ?? {}).some(([dimension, entry]) =>
+      !comparisonDimensions.some((item) => item.id === dimension)
+      || (entry.status === 'Available' ? !entry.value.zh.trim() || !entry.value.en.trim() : Boolean(entry.value.zh.trim() || entry.value.en.trim())))) {
+      setError(t('比较维度必须填写完整的中英文内容；不可用状态不能包含描述。', 'Available comparison entries need Chinese and English text; unavailable statuses cannot contain a description.')); return;
     }
     if (architecture.sourceUrl && !/^https?:\/\//i.test(architecture.sourceUrl)) { setError(t('来源 URL 必须以 http:// 或 https:// 开头。', 'Source URL must start with http:// or https://.')); return; }
     if (architecture.sources?.some((source) => source.url && !/^https?:\/\//i.test(source.url))) { setError(t('来源 URL 必须以 http:// 或 https:// 开头。', 'Source URLs must start with http:// or https://.')); return; }
@@ -322,6 +397,27 @@ function ArchitectureManagement({ data, language, onSave, onDelete }: {
           <div className="form-grid"><label>{t('中文拓扑说明', 'Topology (Chinese)')}<textarea rows={2} value={editing.topology.zh} onChange={(event) => setLocalized('topology', 'zh', event.target.value)} /></label><label>{t('英文拓扑说明', 'Topology (English)')}<textarea rows={2} value={editing.topology.en} onChange={(event) => setLocalized('topology', 'en', event.target.value)} /></label></div>
           <fieldset className="checklist-field"><legend>{t('车辆系统', 'Vehicle systems')} · {editing.systemIds.length}</legend><div className="entity-checklist">{systems.map((entity) => <label key={entity.id}><input type="checkbox" checked={editing.systemIds.includes(entity.id)} onChange={() => toggleId('systemIds', entity.id)} /><span>{entity.name[language] || entity.name.en}</span></label>)}</div></fieldset>
           <fieldset className="checklist-field"><legend>{t('ECU / 功能单元', 'ECUs / Functional units')} · {editing.ecuIds.length}</legend><div className="entity-checklist">{ecus.map((entity) => <label key={entity.id}><input type="checkbox" checked={editing.ecuIds.includes(entity.id)} onChange={() => toggleId('ecuIds', entity.id)} /><span>{entity.name[language] || entity.name.en}</span></label>)}</div></fieldset>
+          <details className="architecture-comparison-editor">
+            <summary>{t('比较维度档案', 'Comparison dimension profile')}</summary>
+            <p className="muted">{t('新增说明应附在本架构记录的证据来源中，并按本记录的内容审核与来源核实状态管理。无可靠资料时保留“暂无数据”。', 'Add evidence sources to this architecture record for new descriptions. Its content-review and source-verification states apply; leave unsupported dimensions as Not Available.')}</p>
+            {(['propulsion', 'ee'] as const).map((group) => <fieldset className="comparison-dimension-group" key={group}>
+              <legend>{group === 'propulsion' ? t('动力架构维度', 'Propulsion dimensions') : t('E/E 架构维度', 'E/E architecture dimensions')}</legend>
+              {comparisonDimensions.filter((item) => item.group === group).map((dimension) => {
+                const entry = editing.comparisonProfile?.[dimension.id] ?? { status: 'Not Available' as const, value: { zh: '', en: '' } };
+                return <div className="comparison-dimension-editor" key={dimension.id}>
+                  <label>{dimension.label[language]}<select value={entry.status} onChange={(event) => setComparisonEntry(dimension.id, { status: event.target.value as ComparisonEntryStatus })}>
+                    <option value="Available">{t('有数据', 'Available')}</option>
+                    <option value="Not Applicable">{t('不适用', 'Not Applicable')}</option>
+                    <option value="Not Available">{t('暂无数据', 'Not Available')}</option>
+                  </select></label>
+                  {entry.status === 'Available' && <div className="form-grid">
+                    <label>{t('中文', 'Chinese')}<textarea rows={2} value={entry.value.zh} onChange={(event) => setComparisonEntry(dimension.id, { locale: 'zh', value: event.target.value })} /></label>
+                    <label>{t('英文', 'English')}<textarea rows={2} value={entry.value.en} onChange={(event) => setComparisonEntry(dimension.id, { locale: 'en', value: event.target.value })} /></label>
+                  </div>}
+                </div>;
+              })}
+            </fieldset>)}
+          </details>
           <div className="section-title"><h3>{t('架构证据来源', 'Architecture evidence sources')}</h3><button type="button" className="button-secondary" onClick={() => setEditing({ ...editing, sources: [...(editing.sources ?? []), { id: `${editing.id || 'source'}-${Date.now()}`, title: { zh: '', en: '' }, type: 'Official documentation' }] })}><Plus size={14} />{t('添加来源', 'Add source')}</button></div>
           {(editing.sources ?? []).map((source, index) => <div className="panel-card source-editor" key={source.id}>
             <div className="form-grid"><label>{t('来源标题（中文）', 'Source title (Chinese)')}<input value={source.title.zh} onChange={(event) => { const sources = [...(editing.sources ?? [])]; sources[index] = { ...source, title: { ...source.title, zh: event.target.value } }; setEditing({ ...editing, sources }); }} /></label>

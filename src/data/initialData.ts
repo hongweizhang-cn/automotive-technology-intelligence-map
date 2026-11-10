@@ -1,4 +1,4 @@
-import type { AppData, Architecture, Entity, EntityCategory, EntityRelation, Propulsion, RelationType } from '../types';
+import type { AppData, Architecture, Entity, EntityCategory, EntityRelation, EvidenceSource, Propulsion, RelationType, TechnologyDetails, TechnologyDomain } from '../types';
 
 const now = new Date().toISOString();
 const allPowertrains: Propulsion[] = ['ICE', 'BEV', 'HEV', 'PHEV', 'EREV', 'FCEV'];
@@ -150,6 +150,148 @@ const techDefs: Array<[string, string, string, string, string, string[]]> = [
   ['tech-1000base', '1000BASE-T1', '1000BASE-T1', '千兆单对双绞线汽车以太网物理层。', 'Gigabit automotive Ethernet physical layer over a single twisted pair.', ['net-ethernet', 'tech-ethernet']],
 ];
 for (const [id, zh, en, dz, de, links] of techDefs) add(id, 'technology', zh, en, dz, de, links);
+
+const accessedAt = '2026-11-10T00:00:00.000Z';
+const evidence = (id: string, title: string, publisher: string, url: string, publicationDate?: string, note?: { zh: string; en: string }): EvidenceSource => ({
+  id, title: { zh: title, en: title }, publisher, type: 'Official specification / documentation', url, publicationDate, accessedAt, note,
+});
+const sourceAutosarClassic = evidence('source-autosar-classic', 'AUTOSAR Classic Platform', 'AUTOSAR', 'https://www.autosar.org/standards/classic-platform');
+const sourceAutosarAdaptive = evidence('source-autosar-adaptive', 'AUTOSAR Adaptive Platform', 'AUTOSAR', 'https://www.autosar.org/standards/adaptive-platform');
+const sourceUds = evidence('source-iso-14229-1-2020', 'ISO 14229-1:2020 Unified diagnostic services — Application layer', 'ISO', 'https://www.iso.org/standard/72439.html', '2020-02', {
+  zh: 'ISO 页面显示此版已撤回；用于描述 UDS 的应用层与诊断测试仪/ECU 客户端-服务器范围，现行版本仍需人工核实。',
+  en: 'ISO lists this edition as withdrawn; cited for the UDS application-layer and tester/ECU client-server scope. Current edition requires human verification.',
+});
+const sourceIpv4 = evidence('source-rfc791', 'RFC 791 — Internet Protocol', 'IETF', 'https://www.rfc-editor.org/rfc/rfc791', '1981-09');
+const sourceIpv6 = evidence('source-rfc8200', 'RFC 8200 — Internet Protocol, Version 6 (IPv6) Specification', 'IETF', 'https://www.rfc-editor.org/rfc/rfc8200', '2017-07');
+const sourceArp = evidence('source-rfc826', 'RFC 826 — An Ethernet Address Resolution Protocol', 'IETF', 'https://www.rfc-editor.org/rfc/rfc826', '1982-11');
+const sourceNdp = evidence('source-rfc4861', 'RFC 4861 — Neighbor Discovery for IP version 6 (IPv6)', 'IETF', 'https://www.rfc-editor.org/rfc/rfc4861', '2007-09');
+const sourceIeeeEthernet = evidence('source-ieee-802-3', 'IEEE 802.3 Ethernet standards catalog', 'IEEE Standards Association', 'https://standards.ieee.org/ieee/802.3/10422', undefined, {
+  zh: '目录说明以太网标准包含 MAC 规范以及多种物理层；具体汽车 PHY/条款尚未逐项核实。',
+  en: 'Catalog describes Ethernet MAC and multiple PHYs; specific automotive PHY clauses have not been independently checked.',
+});
+const localized = (zh = '', en = '') => ({ zh, en });
+const coreTechnology: Array<{
+  id: string; zh: string; en: string; domain: TechnologyDomain; subdomain: string; layer: string;
+  description?: { zh: string; en: string }; details?: Partial<TechnologyDetails>; sources?: EvidenceSource[];
+}> = [
+  { id: 'tech-can', zh: 'CAN', en: 'CAN', domain: 'vehicle-communication', subdomain: 'Vehicle networks', layer: 'Data link / vehicle bus' },
+  { id: 'tech-ethernet-mac', zh: '以太网 MAC', en: 'Ethernet MAC', domain: 'automotive-ethernet', subdomain: 'Automotive Ethernet', layer: 'Data link', sources: [sourceIeeeEthernet] },
+  { id: 'tech-ethernet-switch', zh: '以太网交换机', en: 'Ethernet Switch', domain: 'automotive-ethernet', subdomain: 'Automotive Ethernet', layer: 'Data link', sources: [sourceIeeeEthernet] },
+  { id: 'tech-vlan', zh: 'VLAN', en: 'VLAN', domain: 'automotive-ethernet', subdomain: 'Automotive Ethernet', layer: 'Data link', sources: [sourceIeeeEthernet] },
+  { id: 'tech-ip-network', zh: 'IP 网络', en: 'IP Network', domain: 'automotive-ethernet', subdomain: 'Internet Protocol suite', layer: 'Network' },
+  { id: 'tech-ipv4', zh: 'IPv4', en: 'IPv4', domain: 'automotive-ethernet', subdomain: 'Internet Protocol suite', layer: 'Network', description: { zh: '互联网协议第 4 版。', en: 'Internet Protocol version 4.' }, details: { definition: localized('互联网协议第 4 版。', 'Internet Protocol version 4.'), purpose: localized('为数据报提供网络层寻址与转发。', 'Provides network-layer addressing and forwarding for datagrams.') }, sources: [sourceIpv4] },
+  { id: 'tech-ipv6', zh: 'IPv6', en: 'IPv6', domain: 'automotive-ethernet', subdomain: 'Internet Protocol suite', layer: 'Network', description: { zh: '互联网协议第 6 版。', en: 'Internet Protocol version 6.' }, details: { definition: localized('互联网协议第 6 版。', 'Internet Protocol version 6.') }, sources: [sourceIpv6] },
+  { id: 'tech-arp', zh: 'ARP', en: 'ARP', domain: 'automotive-ethernet', subdomain: 'IPv4 address resolution', layer: 'Network / link-layer address resolution', description: { zh: '在以太网上将协议地址映射为 48 位以太网地址的地址解析协议。', en: 'An address-resolution protocol for mapping protocol addresses to 48-bit Ethernet addresses.' }, details: { definition: localized('在以太网上将协议地址映射为 48 位以太网地址的地址解析协议。', 'An address-resolution protocol for mapping protocol addresses to 48-bit Ethernet addresses.') }, sources: [sourceArp] },
+  { id: 'tech-ndp', zh: 'NDP', en: 'Neighbor Discovery Protocol (NDP)', domain: 'automotive-ethernet', subdomain: 'IPv6 neighbor discovery', layer: 'Internet Control Message Protocol for IPv6', description: { zh: 'IPv6 邻居发现机制，包含邻居存在性发现、链路层地址发现、路由器发现和可达性维护。', en: 'IPv6 neighbor discovery for presence, link-layer addresses, routers, and reachability.' }, details: { definition: localized('IPv6 邻居发现机制，包含邻居存在性发现、链路层地址发现、路由器发现和可达性维护。', 'IPv6 neighbor discovery for presence, link-layer addresses, routers, and reachability.') }, sources: [sourceNdp] },
+  { id: 'tech-diagnostic-tester', zh: '诊断测试仪', en: 'Diagnostic Tester', domain: 'automotive-diagnostics', subdomain: 'Diagnostic participants', layer: 'Diagnostic client' , sources: [sourceUds] },
+  { id: 'tech-diagnostic-session', zh: '诊断会话', en: 'Diagnostic Session', domain: 'automotive-diagnostics', subdomain: 'UDS services', layer: 'Application service', sources: [sourceUds] },
+  { id: 'tech-dtc', zh: '诊断故障码', en: 'Diagnostic Trouble Code (DTC)', domain: 'automotive-diagnostics', subdomain: 'UDS services', layer: 'Application service', sources: [sourceUds] },
+  { id: 'tech-ecu-reprogramming', zh: 'ECU 重编程', en: 'ECU Reprogramming', domain: 'automotive-diagnostics', subdomain: 'Diagnostic services', layer: 'Application service', sources: [sourceUds] },
+  { id: 'tech-diagnostic-communication', zh: '诊断通信', en: 'Diagnostic Communication', domain: 'automotive-diagnostics', subdomain: 'Diagnostic systems', layer: 'Vehicle diagnostic function', sources: [sourceUds] },
+  { id: 'tech-soa', zh: '面向服务架构', en: 'Service-Oriented Architecture (SOA)', domain: 'automotive-software-architecture', subdomain: 'Automotive software architecture', layer: 'Software architecture', description: { zh: 'Adaptive AUTOSAR 采用的服务导向应用通信方式，支持运行时服务发现与通信。', en: 'A service-oriented application communication approach in Adaptive AUTOSAR, supporting runtime service discovery and communication.' }, details: { definition: localized('Adaptive AUTOSAR 采用的服务导向应用通信方式，支持运行时服务发现与通信。', 'A service-oriented application communication approach in Adaptive AUTOSAR, supporting runtime service discovery and communication.') }, sources: [sourceAutosarAdaptive] },
+  { id: 'tech-middleware', zh: '汽车中间件', en: 'Automotive Middleware', domain: 'automotive-software-architecture', subdomain: 'Automotive software architecture', layer: 'Software platform' },
+  { id: 'tech-vehicle-software-platform', zh: '车辆软件平台', en: 'Vehicle Software Platform', domain: 'automotive-software-architecture', subdomain: 'Automotive software architecture', layer: 'Vehicle platform' },
+  { id: 'tech-fota', zh: 'FOTA', en: 'Firmware Over-the-Air (FOTA)', domain: 'software-defined-vehicle', subdomain: 'Software update', layer: 'Update delivery / firmware' },
+  { id: 'tech-sota', zh: 'SOTA', en: 'Software Over-the-Air (SOTA)', domain: 'software-defined-vehicle', subdomain: 'Software update', layer: 'Update delivery / software' },
+  { id: 'tech-centralized-computing', zh: '中央计算', en: 'Centralized Computing', domain: 'software-defined-vehicle', subdomain: 'Vehicle E/E and compute architecture', layer: 'E/E architecture' },
+  { id: 'tech-vehicle-software-update', zh: '车辆软件更新架构', en: 'Vehicle Software Update Architecture', domain: 'software-defined-vehicle', subdomain: 'Software update', layer: 'Vehicle architecture' },
+];
+for (const item of coreTechnology) {
+  const entity: Entity = {
+    id: item.id, category: 'technology', name: localized(item.zh, item.en),
+    description: localized(item.description?.zh ?? '', item.description?.en ?? ''), relatesTo: [], relations: [],
+    sources: item.sources ?? [], confidence: 'Unverified', reviewStatus: 'Pending Review', createdBy: 'Agent',
+    createdAt: now, updatedAt: now, verificationStatus: 'Unverified',
+    technologyDetails: { domain: item.domain, subdomain: localized(item.subdomain, item.subdomain), layer: localized(item.layer, item.layer), ...item.details },
+  };
+  entities.push(entity);
+}
+
+const relationSpec: Array<[string, string, RelationType, string, string]> = [
+  ['tech-canfd', 'tech-can', 'related_to', 'CAN FD 与 CAN 属于相关的车载通信技术；本链接用于分类，不陈述具体帧格式。', 'CAN FD and CAN are related vehicle communication technologies; this taxonomy link does not specify frame formats.'],
+  ['tech-100base', 'tech-ethernet', 'part_of', '100BASE-T1 属于以太网物理层技术系列。', '100BASE-T1 belongs to the Ethernet physical-layer technology family.'],
+  ['tech-1000base', 'tech-ethernet', 'part_of', '1000BASE-T1 属于以太网物理层技术系列。', '1000BASE-T1 belongs to the Ethernet physical-layer technology family.'],
+  ['tech-ethernet-mac', 'tech-ethernet', 'part_of', 'MAC 是以太网数据链路功能的一部分；实现边界依系统而异。', 'MAC is part of Ethernet data-link functionality; implementation boundaries vary.'],
+  ['tech-ethernet-switch', 'tech-ethernet', 'related_to', '交换机用于连接以太网链路；具体网络拓扑未在此处规定。', 'Switches connect Ethernet links; this does not prescribe a network topology.'],
+  ['tech-vlan', 'tech-ethernet', 'related_to', 'VLAN 用于以太网二层网络划分。', 'VLAN provides Layer 2 segmentation in Ethernet networks.'],
+  ['tech-ipv4', 'tech-ethernet', 'related_to', 'IP 协议可在以太网链路上承载；不表示特定车辆配置。', 'IP can be carried over Ethernet links; no vehicle configuration is implied.'],
+  ['tech-ipv6', 'tech-ethernet', 'related_to', 'IP 协议可在以太网链路上承载；不表示特定车辆配置。', 'IP can be carried over Ethernet links; no vehicle configuration is implied.'],
+  ['tech-ipv4', 'tech-arp', 'uses', 'IPv4 链路上的地址解析可使用 ARP。', 'Address resolution on IPv4 links can use ARP.'],
+  ['tech-ipv6', 'tech-ndp', 'uses', 'IPv6 邻居发现由 NDP 提供。', 'IPv6 neighbor discovery is provided by NDP.'],
+  ['tech-ipv4', 'tech-ip-network', 'part_of', '本知识图谱将 IPv4 归入 IP 网络协议族。', 'This knowledge map groups IPv4 within the IP networking family.'],
+  ['tech-ipv6', 'tech-ip-network', 'part_of', '本知识图谱将 IPv6 归入 IP 网络协议族。', 'This knowledge map groups IPv6 within the IP networking family.'],
+  ['tech-can', 'net-canfd', 'related_to', 'CAN 是 CAN FD 网络使用的技术家族成员；网络实例仅作关联索引。', 'CAN is part of the technology family associated with CAN FD networks; this is a knowledge link.'],
+  ['tech-canfd', 'net-canfd', 'related_to', '关联到现有 CAN FD 通信网络实体。', 'Linked to the existing CAN FD communication-network entity.'],
+  ['tech-lin', 'net-lin', 'related_to', '关联到现有 LIN 通信网络实体。', 'Linked to the existing LIN communication-network entity.'],
+  ['tech-ethernet', 'net-ethernet', 'related_to', '关联到现有车载以太网网络实体。', 'Linked to the existing Automotive Ethernet network entity.'],
+  ['tech-100base', 'net-ethernet', 'related_to', '该网络实体作为车载以太网 PHY 技术的架构索引，不代表物理链路配置。', 'The network entity is an architecture index for Ethernet PHY technology, not a physical-link configuration.'],
+  ['tech-1000base', 'net-ethernet', 'related_to', '该网络实体作为车载以太网 PHY 技术的架构索引，不代表物理链路配置。', 'The network entity is an architecture index for Ethernet PHY technology, not a physical-link configuration.'],
+  ['tech-doip', 'net-ethernet', 'related_to', '与现有车载以太网网络实体关联；具体 DoIP 路由需车型资料确认。', 'Linked to the existing Automotive Ethernet network entity; vehicle-specific DoIP routing needs confirmation.'],
+  ['tech-doip', 'sys-network', 'related_to', '与车辆通信网络系统相关；未指定网络拓扑。', 'Related to vehicle communication networks; no topology is specified.'],
+  ['tech-centralized-computing', 'ecu-central-compute', 'related_to', '逻辑架构概念与现有中央计算平台参考节点相连，不代表具体车辆配置。', 'The logical architecture concept links to the existing central-compute reference node; no vehicle configuration is implied.'],
+  ['tech-ota', 'ecu-tcu', 'related_to', '与现有车载通信单元实体相关；不表示特定更新通路。', 'Related to the existing telematics control unit entity; no specific update path is implied.'],
+  ['tech-ota', 'sys-network', 'related_to', '与车辆通信网络相关；具体更新路径依实现而异。', 'Related to vehicle communication networks; the update path varies by implementation.'],
+  ['tech-doip', 'tech-ip-network', 'uses', 'DoIP 基于 IP 网络；具体传输细节待来源核实。', 'DoIP uses IP networking; transport details require source verification.'],
+  ['tech-doip', 'tech-diagnostic-tester', 'communicates_with', '诊断测试仪是车载诊断通信的对端角色；部署方式依系统而异。', 'A diagnostic tester is a peer in vehicle diagnostic communication; deployment varies.'],
+  ['tech-doip', 'ecu-gateway', 'communicates_with', '网关可能参与诊断网络路由；具体 DoIP 角色需车型资料确认。', 'A gateway may participate in diagnostic-network routing; a vehicle-specific DoIP role needs confirmation.'],
+  ['tech-doip', 'ecu-vcu', 'communicates_with', 'DoIP 诊断通信可面向 ECU；具体 ECU 配置需车型资料确认。', 'DoIP diagnostics can communicate with ECUs; exact ECU configuration is vehicle-specific.'],
+  ['tech-doip', 'tech-uds', 'transports', 'DoIP 可作为承载 UDS 诊断消息的传输方式；待人工核实现行规范版本。', 'DoIP can transport UDS diagnostic messages; current specification editions require human verification.'],
+  ['tech-diagnostic-session', 'tech-uds', 'part_of', '诊断会话是 UDS 服务体系中的会话功能。', 'Diagnostic sessions are part of the UDS service model.'],
+  ['tech-dtc', 'tech-uds', 'part_of', 'UDS 服务包含诊断信息及故障码相关服务。', 'UDS services include diagnostic-information and trouble-code-related services.'],
+  ['tech-ecu-reprogramming', 'tech-uds', 'related_to', 'UDS 服务体系可用于 ECU 编程相关流程；具体流程取决于实现。', 'UDS services can support ECU programming procedures; exact procedures depend on implementation.'],
+  ['tech-soa', 'tech-autosar-adaptive', 'related_to', 'AUTOSAR 官方资料描述 Adaptive 平台采用服务导向应用通信。', 'AUTOSAR describes service-oriented application communication in the Adaptive Platform.'],
+  ['tech-autosar-classic', 'ecu-vcu', 'related_to', 'Classic AUTOSAR 面向基于微控制器的 ECU 软件架构；不代表该 ECU 的实际配置。', 'Classic AUTOSAR is a microcontroller-oriented ECU software architecture; this does not assert this ECU implementation.'],
+  ['tech-autosar-adaptive', 'ecu-adas', 'related_to', 'Adaptive AUTOSAR 官方资料提及 ADAS 场景；不代表该 ECU 的实际软件平台。', 'AUTOSAR materials discuss ADAS use cases; this does not assert this ECU implementation.'],
+  ['tech-autosar-classic', 'tech-autosar-adaptive', 'related_to', 'AUTOSAR 官方资料将两平台描述为可兼容、互补并可并行运行。', 'AUTOSAR describes the platforms as compatible and complementary, able to coexist.'],
+  ['tech-middleware', 'tech-autosar-adaptive', 'related_to', 'Adaptive AUTOSAR 官方资料描述其采用中间件范式。', 'AUTOSAR describes a middleware paradigm in the Adaptive Platform.'],
+  ['tech-sdv', 'tech-centralized-computing', 'related_to', '知识组织关联：SDV 与中央计算相关，但并非互为必要条件。', 'Knowledge-map association: SDV and centralized computing are related, not mutually required.'],
+  ['tech-sdv', 'tech-ota', 'related_to', '知识组织关联：OTA 可用于车辆软件演进；不是 SDV 的唯一实现方式。', 'Knowledge-map association: OTA can support vehicle software evolution but is not the sole SDV implementation.'],
+  ['tech-fota', 'tech-ota', 'part_of', '本知识图谱将 FOTA 作为 OTA 更新的固件更新类别；术语边界仍待来源核实。', 'This map models FOTA as an OTA firmware-update category; terminology boundaries require verification.'],
+  ['tech-sota', 'tech-ota', 'part_of', '本知识图谱将 SOTA 作为 OTA 更新的软件更新类别；术语边界仍待来源核实。', 'This map models SOTA as an OTA software-update category; terminology boundaries require verification.'],
+  ['tech-ota', 'ecu-gateway', 'communicates_with', '车辆更新流程可能经车载网络和网关传递；具体拓扑依实现而异。', 'Vehicle updates may traverse in-vehicle networks and gateways; topology varies by implementation.'],
+  ['tech-ota', 'tech-vehicle-software-update', 'related_to', 'OTA 是车辆软件更新架构可采用的远程交付路径之一。', 'OTA is one possible remote-delivery path in a vehicle software-update architecture.'],
+  ['tech-ota', 'net-ethernet', 'uses', '车辆软件更新数据可通过车载网络分发；具体网络路径需车型资料确认。', 'Vehicle update data may be distributed over in-vehicle networks; exact routes are vehicle-specific.'],
+  ['tech-vehicle-software-update', 'tech-diagnostic-communication', 'related_to', '车辆更新与诊断通信可能协同，但具体流程依实现和规范。', 'Vehicle updates and diagnostic communication may interact; procedures depend on implementation and specifications.'],
+];
+for (const [sourceId, targetId, type, zh, en] of relationSpec) {
+  const source = entities.find((entity) => entity.id === sourceId);
+  const target = entities.find((entity) => entity.id === targetId);
+  if (!source || !target) throw new Error(`Missing technology relation endpoint: ${sourceId} -> ${targetId}`);
+  const relation = { targetId, type, description: localized(zh, en) };
+  source.relations = [...(source.relations ?? []).filter((item) => item.targetId !== targetId), relation];
+  source.relatesTo = Array.from(new Set([...source.relatesTo, targetId]));
+}
+
+const technologyMetadata = new Map<string, { domain: TechnologyDomain; subdomain: string; layer: string; sources?: EvidenceSource[]; details?: Partial<TechnologyDetails> }>([
+  ['tech-canfd', { domain: 'vehicle-communication', subdomain: 'Vehicle networks', layer: 'Data link / vehicle bus' }],
+  ['tech-lin', { domain: 'vehicle-communication', subdomain: 'Vehicle networks', layer: 'Vehicle bus' }],
+  ['tech-ethernet', { domain: 'automotive-ethernet', subdomain: 'Automotive Ethernet', layer: 'Link and physical technologies', sources: [sourceIeeeEthernet] }],
+  ['tech-100base', { domain: 'automotive-ethernet', subdomain: 'Automotive Ethernet', layer: 'Physical layer', sources: [sourceIeeeEthernet] }],
+  ['tech-1000base', { domain: 'automotive-ethernet', subdomain: 'Automotive Ethernet', layer: 'Physical layer', sources: [sourceIeeeEthernet] }],
+  ['tech-doip', { domain: 'automotive-diagnostics', subdomain: 'Diagnostic transport', layer: 'IP transport' }],
+  ['tech-uds', { domain: 'automotive-diagnostics', subdomain: 'Unified diagnostic services', layer: 'Application layer', sources: [sourceUds], details: { definition: localized('诊断测试仪（客户端）控制车载 ECU（服务器）诊断功能的应用层服务。', 'Application-layer services for a diagnostic tester (client) to control diagnostic functions in an on-vehicle ECU (server).') } }],
+  ['tech-diagnostics', { domain: 'automotive-diagnostics', subdomain: 'Vehicle diagnostics', layer: 'Vehicle diagnostic function' }],
+  ['tech-autosar-classic', { domain: 'automotive-software-architecture', subdomain: 'AUTOSAR', layer: 'Microcontroller ECU platform', sources: [sourceAutosarClassic], details: { definition: localized('AUTOSAR Classic 采用应用层、RTE 与基础软件等分层结构，运行于微控制器。', 'AUTOSAR Classic uses layered application, RTE, and basic-software architecture on microcontrollers.'), purpose: localized('为汽车 ECU 软件提供标准化架构与接口。', 'Provides standardized architecture and interfaces for automotive ECU software.'), useCases: localized('官方资料定位于微控制器 ECU 软件；具体产品配置须另行核实。', 'Official materials position it for microcontroller ECUs; product-specific deployment requires separate verification.') } }],
+  ['tech-autosar-adaptive', { domain: 'automotive-software-architecture', subdomain: 'AUTOSAR', layer: 'High-performance processor platform', sources: [sourceAutosarAdaptive], details: { definition: localized('AUTOSAR Adaptive 为汽车应用规定基于微处理器的运行环境与标准化接口。', 'AUTOSAR Adaptive specifies a runtime environment and standardized interfaces for automotive applications on microprocessors.'), purpose: localized('支持动态服务通信及高性能处理器平台上的应用。', 'Supports dynamic service communication and applications on microprocessor platforms.'), useCases: localized('AUTOSAR 官方资料涉及 ADAS 等场景；不意味着其取代 Classic。', 'AUTOSAR materials discuss use cases such as ADAS; this does not imply replacement of Classic.') } }],
+  ['tech-someip', { domain: 'automotive-software-architecture', subdomain: 'Service communication', layer: 'Middleware / service communication' }],
+  ['tech-sdv', { domain: 'software-defined-vehicle', subdomain: 'Vehicle software evolution', layer: 'Vehicle concept' }],
+  ['tech-ota', { domain: 'software-defined-vehicle', subdomain: 'Software update', layer: 'Remote update delivery' }],
+]);
+for (const [id, metadata] of technologyMetadata) {
+  const entity = entities.find((item) => item.id === id);
+  if (!entity) continue;
+  entity.technologyDetails = {
+    domain: metadata.domain, subdomain: localized(metadata.subdomain, metadata.subdomain), layer: localized(metadata.layer, metadata.layer),
+    ...metadata.details,
+  };
+  if (metadata.sources?.length) entity.sources = metadata.sources;
+  if (['tech-canfd', 'tech-lin', 'tech-ethernet', 'tech-100base', 'tech-1000base', 'tech-doip', 'tech-uds', 'tech-diagnostics', 'tech-someip', 'tech-autosar-classic', 'tech-autosar-adaptive', 'tech-sdv', 'tech-ota'].includes(id)) {
+    entity.createdBy = 'Agent';
+    entity.reviewStatus = 'Pending Review';
+    entity.verificationStatus = 'Unverified';
+    entity.confidence = 'Unverified';
+  }
+}
 
 const standards: Array<[string, string, string, string, string, string[]]> = [
   ['std-14229', 'ISO 14229', 'ISO 14229', '道路车辆统一诊断服务（UDS）系列标准。', 'Road vehicles — Unified diagnostic services (UDS) series.', ['tech-uds']],

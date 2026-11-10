@@ -1,5 +1,5 @@
 import { initialData } from '../data/initialData';
-import type { AppData, ChangeRecord, Entity, EntityRelation, EvidenceSource, LearningData, Propulsion, RelationType, ReviewStatus, VerificationStatus } from '../types';
+import type { AppData, ArchitectureComparisonDimension, ChangeRecord, Entity, EntityRelation, EvidenceSource, LearningData, Propulsion, RelationType, ReviewStatus, TechnologyDomain, VerificationStatus } from '../types';
 
 const DATA_KEY = 'automotive-map:data:v1';
 const HISTORY_KEY = 'automotive-map:history:v1';
@@ -7,8 +7,16 @@ const LEARNING_KEY = 'automotive-map:learning:v1';
 const propulsions: Propulsion[] = ['ICE', 'BEV', 'HEV', 'PHEV', 'EREV', 'FCEV'];
 const reviewStatuses: ReviewStatus[] = ['Draft', 'Pending Review', 'Approved', 'Rejected'];
 const categories = ['system', 'ecu', 'sensor', 'actuator', 'hardware', 'network', 'technology', 'standard', 'company'];
-const relationTypes: RelationType[] = ['related_to', 'contains', 'part_of', 'controls', 'monitors', 'communicates_with', 'connected_to', 'powered_by', 'distributes_power_to', 'depends_on', 'implements', 'uses', 'integrates'];
+const relationTypes: RelationType[] = ['related_to', 'contains', 'part_of', 'controls', 'monitors', 'communicates_with', 'connected_to', 'powered_by', 'distributes_power_to', 'depends_on', 'implements', 'uses', 'integrates', 'transports', 'defines'];
 const verificationStatuses: VerificationStatus[] = ['Unverified', 'Pending Verification', 'Verified'];
+const technologyDomains: TechnologyDomain[] = ['vehicle-communication', 'automotive-ethernet', 'automotive-diagnostics', 'automotive-software-architecture', 'software-defined-vehicle'];
+const comparisonDimensions: ArchitectureComparisonDimension[] = [
+  'primaryEnergySource', 'energyStorage', 'energyConversion', 'powerGeneration', 'powerTransmission',
+  'tractionSystem', 'mainControlUnits', 'supportingSystems', 'communicationNetworks',
+  'architectureCharacteristics', 'technicalAdvantages', 'technicalLimitations', 'controllerOrganization', 'functionalAllocation',
+  'computingDistribution', 'networkTopology', 'communicationBackbone', 'wiringArchitecture',
+  'softwareDeployment', 'systemIntegration', 'scalability', 'typicalApplicationScenarios',
+];
 
 function isHttpUrl(value: string): boolean {
   try {
@@ -34,6 +42,7 @@ function isEntity(value: unknown): value is Entity {
     && (item.relations === undefined || Array.isArray(item.relations) && item.relations.every(isRelation))
     && (item.sources === undefined || Array.isArray(item.sources) && item.sources.every(isEvidenceSource))
     && (item.verificationStatus === undefined || verificationStatuses.includes(item.verificationStatus))
+    && (item.technologyDetails === undefined || item.category === 'technology' && isTechnologyDetails(item.technologyDetails))
     && (item.appliesTo === undefined || Array.isArray(item.appliesTo) && item.appliesTo.every((id) => propulsions.includes(id)))
     && (item.sourceUrl === undefined || item.sourceUrl === '' || typeof item.sourceUrl === 'string' && isHttpUrl(item.sourceUrl))
     && (item.sourceTitle === undefined || typeof item.sourceTitle === 'string')
@@ -64,8 +73,31 @@ function isEvidenceSource(value: unknown): value is EvidenceSource {
     && Boolean(source.title.zh.trim() || source.title.en.trim())
     && (source.url === undefined || source.url === '' || typeof source.url === 'string' && isHttpUrl(source.url))
     && (source.publisher === undefined || typeof source.publisher === 'string')
+    && (source.publicationDate === undefined || typeof source.publicationDate === 'string' && Number.isFinite(Date.parse(source.publicationDate)))
     && (source.accessedAt === undefined || typeof source.accessedAt === 'string' && Number.isFinite(Date.parse(source.accessedAt)))
     && (source.note === undefined || isLocalizedText(source.note));
+}
+
+function isTechnologyDetails(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const details = value as { domain?: unknown; subdomain?: unknown; layer?: unknown; definition?: unknown; purpose?: unknown; mechanism?: unknown; keyFeatures?: unknown; useCases?: unknown; advantages?: unknown; limitations?: unknown; applicableArchitectures?: unknown };
+  return technologyDomains.includes(details.domain as TechnologyDomain)
+    && ['subdomain', 'layer', 'definition', 'purpose', 'mechanism', 'keyFeatures', 'useCases', 'advantages', 'limitations']
+      .every((key) => details[key as keyof typeof details] === undefined || isLocalizedText(details[key as keyof typeof details]))
+    && (details.applicableArchitectures === undefined || Array.isArray(details.applicableArchitectures)
+      && details.applicableArchitectures.every((item) => typeof item === 'string'));
+}
+
+function isComparisonProfile(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.entries(value).every(([key, entry]) => {
+    if (!comparisonDimensions.includes(key as ArchitectureComparisonDimension) || !entry || typeof entry !== 'object') return false;
+    const item = entry as { status?: unknown; value?: unknown };
+    return ['Available', 'Not Applicable', 'Not Available'].includes(item.status as string)
+      && isLocalizedText(item.value)
+      && (item.status !== 'Available' || Boolean(item.value.zh.trim() && item.value.en.trim()))
+      && (item.status === 'Available' || !item.value.zh.trim() && !item.value.en.trim());
+  });
 }
 
 function migrateEntity(value: unknown): Entity {
@@ -133,8 +165,10 @@ export function readData(): { data: AppData; warning?: string } {
     const raw = localStorage.getItem(DATA_KEY);
     if (!raw) return { data: initialData };
     const parsed: unknown = JSON.parse(raw);
-    const data = validateImport(parsed);
-    if ((parsed as { version?: number }).version !== data.version) {
+    const parsedData = validateImport(parsed);
+    const merged = mergeTechnologyCatalog(parsedData);
+    const data = merged.data;
+    if ((parsed as { version?: number }).version !== data.version || merged.changed) {
       try {
         saveData(data);
       } catch (error) {
@@ -149,6 +183,41 @@ export function readData(): { data: AppData; warning?: string } {
 
 export function saveData(data: AppData): void {
   localStorage.setItem(DATA_KEY, JSON.stringify(data));
+}
+
+function mergeTechnologyCatalog(data: AppData): { data: AppData; changed: boolean } {
+  const existingById = new Map(data.entities.map((entity) => [entity.id, entity]));
+  let changed = false;
+  const entities = data.entities.map((entity) => {
+    const seed = initialData.entities.find((item) => item.id === entity.id && item.category === 'technology');
+    if (!seed) return entity;
+    const newRelations = (seed.relations ?? []).filter((relation) =>
+      !entity.relations?.some((existing) => existing.targetId === relation.targetId));
+    const newSources = (seed.sources ?? []).filter((source) => !entity.sources?.some((existing) => existing.id === source.id));
+    const addDetails = !entity.technologyDetails && Boolean(seed.technologyDetails);
+    if (!addDetails && !newRelations.length && !newSources.length) return entity;
+    changed = true;
+    const relations = [...(entity.relations ?? []), ...newRelations];
+    return {
+      ...entity,
+      technologyDetails: entity.technologyDetails ?? seed.technologyDetails,
+      relations,
+      relatesTo: Array.from(new Set([...entity.relatesTo, ...newRelations.map((relation) => relation.targetId)])),
+      sources: [...(entity.sources ?? []), ...newSources],
+      createdBy: 'Agent' as const,
+      reviewStatus: 'Pending Review' as const,
+      confidence: 'Unverified' as const,
+      verificationStatus: 'Unverified' as const,
+      updatedAt: new Date().toISOString(),
+    };
+  });
+  for (const seed of initialData.entities) {
+    if (seed.category === 'technology' && !existingById.has(seed.id)) {
+      entities.push(seed);
+      changed = true;
+    }
+  }
+  return changed ? { data: validateImport({ ...data, entities }), changed } : { data, changed };
 }
 
 export function readHistory(): ChangeRecord[] {
@@ -238,7 +307,8 @@ export function validateImport(value: unknown): AppData {
       || (architecture.sources !== undefined && (!Array.isArray(architecture.sources) || !architecture.sources.every(isEvidenceSource)))
       || (architecture.verificationStatus !== undefined && !verificationStatuses.includes(architecture.verificationStatus))
       || (architecture.sourceUrl !== undefined && architecture.sourceUrl !== '' && (typeof architecture.sourceUrl !== 'string' || !isHttpUrl(architecture.sourceUrl)))
-      || (architecture.sourceTitle !== undefined && typeof architecture.sourceTitle !== 'string')) {
+      || (architecture.sourceTitle !== undefined && typeof architecture.sourceTitle !== 'string')
+      || (architecture.comparisonProfile !== undefined && !isComparisonProfile(architecture.comparisonProfile))) {
       throw new Error('One or more vehicle architectures have invalid entity lists.');
     }
     if (new Set((architecture.sources ?? []).map((source) => source.id)).size !== (architecture.sources ?? []).length) {

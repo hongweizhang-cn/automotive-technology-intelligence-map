@@ -1,5 +1,11 @@
 import { Bookmark, BookmarkCheck, ExternalLink, X } from 'lucide-react';
-import type { Entity, Language } from '../types';
+import type { Entity, EntityRelation, Language } from '../types';
+
+interface SelectedRelationship {
+  source: Entity;
+  target: Entity;
+  relation: EntityRelation;
+}
 
 interface Props {
   entity?: Entity;
@@ -10,9 +16,10 @@ interface Props {
   onSelectRelated: (id: string) => void;
   onClose?: () => void;
   compact?: boolean;
+  relationship?: SelectedRelationship | null;
 }
 
-export default function EntityDetails({ entity, entities, language, favorite, onFavorite, onSelectRelated, onClose, compact }: Props) {
+export default function EntityDetails({ entity, entities, language, favorite, onFavorite, onSelectRelated, onClose, compact, relationship }: Props) {
   const related = entity?.relatesTo.map((id) => entities.find((item) => item.id === id)).filter((item): item is Entity => Boolean(item)) ?? [];
   const relationshipByTarget = new Map((entity?.relations ?? []).map((relation) => [relation.targetId, relation]));
   const sources = entity?.sources?.length ? entity.sources : entity?.sourceUrl ? [{
@@ -34,6 +41,7 @@ export default function EntityDetails({ entity, entities, language, favorite, on
       communicates_with: ['通信', 'communicates with'], connected_to: ['连接', 'connected to'],
       powered_by: ['由其供电', 'powered by'], distributes_power_to: ['向其供电', 'distributes power to'],
       depends_on: ['依赖', 'depends on'], implements: ['实现', 'implements'], uses: ['使用', 'uses'], integrates: ['集成', 'integrates'],
+      transports: ['承载 / 传输', 'transports'], defines: ['定义', 'defines'],
     };
     return labels[type]?.[language === 'zh' ? 0 : 1] ?? type;
   };
@@ -79,6 +87,23 @@ export default function EntityDetails({ entity, entities, language, favorite, on
               </button>
             ))}</div> : <p className="muted">{language === 'zh' ? '暂无关联' : 'No linked entities'}</p>}
           </section>
+          {relationship && <section className="detail-section selected-relationship">
+            <h4>{language === 'zh' ? '关系详情' : 'Relationship details'}</h4>
+            <dl className="detail-meta">
+              <div><dt>{language === 'zh' ? '关系类型' : 'Relationship type'}</dt><dd>{relationLabel(relationship.relation.type)}</dd></div>
+              <div><dt>{language === 'zh' ? '方向' : 'Direction'}</dt><dd>{language === 'zh' ? '起点 → 终点' : 'Source → target'}</dd></div>
+              <div><dt>{language === 'zh' ? '起点实体' : 'Source entity'}</dt><dd>{relationship.source.name[language] || relationship.source.name.en}</dd></div>
+              <div><dt>{language === 'zh' ? '终点实体' : 'Target entity'}</dt><dd>{relationship.target.name[language] || relationship.target.name.en}</dd></div>
+              <div><dt>{language === 'zh' ? '关系说明' : 'Description'}</dt><dd>{relationship.relation.description[language] || (language === 'zh' ? '未填写' : 'Not provided')}</dd></div>
+              <div><dt>{language === 'zh' ? '起点审核状态' : 'Source review status'}</dt><dd>{statusLabel(relationship.source.reviewStatus)}</dd></div>
+              <div><dt>{language === 'zh' ? '起点来源核实' : 'Source verification'}</dt><dd>{verificationLabel(relationship.source.verificationStatus ?? 'Unverified')}</dd></div>
+            </dl>
+            <p className="muted">{language === 'zh' ? '该方向表示数据中记录的关系方向，不表示连线的空间方向。关系本身未单独记录来源；显示来源实体的审核状态与证据。' : 'This is the recorded relationship direction, not the visual edge direction. The relationship has no separate evidence record; source-entity review and evidence are shown.'}</p>
+            {relationship.source.sources?.length ? <div className="related-list">{relationship.source.sources.map((source) => <div className="evidence-item" key={source.id}>
+              {source.url ? <a className="source-link" href={source.url} target="_blank" rel="noreferrer">{source.title[language] || source.title.en || source.url}<ExternalLink size={12} /></a> : <strong>{source.title[language] || source.title.en}</strong>}
+              <small>{source.type}{source.publisher ? ` · ${source.publisher}` : ''}</small>
+            </div>)}</div> : <p className="muted">{language === 'zh' ? '关系来源未填写。' : 'No relationship source recorded.'}</p>}
+          </section>}
           <section className="detail-section">
             <h4>{language === 'zh' ? '证据来源' : 'Evidence sources'} <span className="count-badge">{sources.length}</span></h4>
             {sources.length ? <div className="related-list">{sources.map((source) => <div className="evidence-item" key={source.id}>

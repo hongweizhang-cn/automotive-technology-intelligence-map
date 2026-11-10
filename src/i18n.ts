@@ -4,7 +4,7 @@ import { initReactI18next } from 'react-i18next';
 const resources = {
   en: { translation: {
     tagline: 'Automotive Technology Intelligence Map',
-    architecture: 'Vehicle Architecture', explorer: 'Technology Explorer', industry: 'Industry & Company Map',
+    architecture: 'Vehicle Architecture', explorer: 'Technology Explorer', comparison: 'Architecture Comparison', industry: 'Industry & Company Map',
     radar: 'Technology Radar', learning: 'My Learning Center', data: 'Data Management',
     search: 'Search systems, ECUs, and technologies…', language: '中文', overview: 'Overview',
     systems: 'Systems', controllers: 'Controllers', technologies: 'Technologies', standards: 'Standards',
@@ -37,7 +37,7 @@ const resources = {
   } },
   zh: { translation: {
     tagline: '汽车技术全景地图与行业情报平台',
-    architecture: '整车架构', explorer: '技术探索', industry: '行业与企业', radar: '技术雷达', learning: '个人学习中心', data: '数据管理',
+    architecture: '整车架构', explorer: '技术探索', comparison: '架构比较', industry: '行业与企业', radar: '技术雷达', learning: '个人学习中心', data: '数据管理',
     search: '搜索系统、ECU 与技术…', language: 'EN', overview: '总览',
     systems: '车辆系统', controllers: '控制器', technologies: '技术', standards: '标准',
     architectureMap: '架构地图', reference: '参考架构', ee: '电子电气架构',

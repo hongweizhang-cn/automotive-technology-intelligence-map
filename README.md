@@ -12,15 +12,18 @@ Build an evolvable automotive technology knowledge graph that helps users follow
 
 ## Key Features
 
-- Interactive React Flow architecture map with a custom vehicle outline, pan/zoom, category layers, search, typed directional relationship labels, node details, and step-by-step system/ECU exploration.
+- Interactive React Flow architecture map with a custom vehicle outline, pan/zoom, category layers, search, typed directional relationship labels, selectable relationship-type filters, adjacent-node highlighting, relationship details, and step-by-step system/ECU exploration.
 - Six propulsion reference architectures: ICE, BEV, HEV, PHEV, EREV, and FCEV. Powertrain topology is kept separate from the selectable E/E architecture.
-- Technology Explorer with bilingual search, categories, relationship links, favorites, and note-taking.
+- Technology Explorer with five automotive engineering domains, bilingual search, status-aware technical profiles, typed relationship traversal, source details, architecture-map navigation, favorites, and note-taking.
+- Architecture Comparison for selecting two to four propulsion types or E/E architectures, with grouped/collapsible dimensions and table/card views. It uses recorded systems, ECUs, topology, networks, and optional bilingual comparison profiles; unavailable and inapplicable data are distinct.
 - Industry directory for representative organizations, explicitly labeled as general capability rather than confirmed supplier relationships.
 - Qualitative Technology Radar; its groupings are directional themes, not market forecasts.
 - Data Management for local entity creation, editing, deletion guards, typed relationships, multiple evidence sources, independent review/verification states, JSON import/export, and change history.
 - Vehicle architecture record management, including propulsion/E/E combinations and system/ECU membership. Each propulsion type must retain an approved reference architecture.
 - Local favorites and per-entity learning notes.
 - Chinese and English interface and entity content.
+- Global entity search across bilingual names, IDs, and descriptions, with entity type, propulsion, and E/E architecture filters.
+- A dynamic data quality summary for duplicate records, missing bilingual information, invalid/dangling relations, unverified sources, and Agent review state.
 
 ## Supported Vehicle Architectures
 
@@ -51,8 +54,8 @@ These are generic reference architectures and do not describe the actual configu
 src/
   components/       Architecture map and entity detail panel
   data/             Initial automotive reference dataset
-  pages/            Technology Explorer and Data Management
-  services/         Local persistence, history, and import validation
+  pages/            Technology Explorer, Architecture Comparison, and Data Management
+  services/         Local persistence, history, import validation, comparison, search, and quality checks
   types.ts          Shared entity and architecture types
   i18n.ts           English and Chinese UI resources
   App.tsx           App shell and remaining feature views
@@ -73,11 +76,14 @@ Open the local URL printed by Vite. Verify a production bundle with:
 ```bash
 npm run typecheck
 npm run build
+npm test
 ```
+
+The Vitest suite covers reference architecture coverage, relationship integrity and invalid targets, version 1 migration and version 2 JSON round-tripping, localStorage reads/writes, Agent review enforcement, independent review/source-verification states, architecture comparison accuracy, bilingual search filters, data quality checks, and language switching.
 
 ## Data Management
 
-Open **Data Management** to search and filter entities, add or edit bilingual records and typed relationships, manage evidence sources, confidence, content-review and source-verification states, or inspect change history. The Vehicle Architectures tab manages reference topology records and their system/ECU membership. Approved entities are shown in the architecture map and Technology Explorer. Entity deletion is blocked when another entity or a vehicle architecture references it.
+Open **Data Management** to search and filter entities, add or edit bilingual records and typed relationships, manage technology domains and detail fields, evidence sources (including publication date), confidence, content-review and source-verification states, or inspect change history. The Vehicle Architectures tab manages reference topology records and their system/ECU membership. Approved entities are shown in the architecture map; Technology Explorer also exposes pending-review knowledge with its status visible. Entity deletion is blocked when another entity or a vehicle architecture references it.
 
 JSON export downloads the current version 2 data. Import accepts version 1 and version 2, validates required fields, duplicate IDs, and entity/architecture references before replacing the current data. Version 1 relationships are retained as generic links with explicitly unspecified semantics; missing metadata is migrated without inventing evidence. Failed imports leave the existing dataset unchanged. Existing version 1 local data is migrated in place when it can be saved; browser history, favorites, and notes remain in their separate storage keys.
 
@@ -85,15 +91,17 @@ Application data, change history, favorites, and learning notes are stored in th
 
 ## Data Quality and Review
 
-Seed architectures are illustrative reference data, not production configurations. The company directory describes representative organizations and general capabilities only; it does not assert vehicle-specific supply relationships. Seed records have no fabricated citations and are marked **Unverified** for source verification, even where their local content-review state is **Approved**. Content review, confidence, and source verification are separate signals; an Approved review state does not establish that a claim has been externally verified. Multiple evidence sources can record title, URL, type, publisher, access time, and notes.
+Seed architectures are illustrative reference data, not production configurations. The company directory describes representative organizations and general capabilities only; it does not assert vehicle-specific supply relationships. New technology content is marked **Pending Review** and **Unverified**; its evidence sources record title, URL, publisher, publication date when known, access time, and notes. Content review, confidence, and source verification are separate signals; an Approved review state does not establish that a claim has been externally verified. Some requested topics remain intentionally blank where a reliable, accessible source was not available.
+
+Architecture Comparison reflects only current local architecture records and explicitly typed links. Optional bilingual comparison profiles can record engineering dimensions and explicitly mark them Available, Not Applicable, or Not Available. Available entries inherit the architecture record's review and source-verification metadata; missing dimensions remain Not Available and are not inferred. Profiles are generic reference descriptions, not production-vehicle configurations. No new technical claims or citations are seeded without verification.
 
 New records start as Draft and Unverified. Users can move records through Draft, Pending Review, Approved, and Rejected. Agent-created records cannot be directly marked Approved. Only Approved entities are surfaced in the map and explorer. Review is a local workflow and does not provide multi-user attribution or approval controls. Generic legacy relationships remain labeled as semantically unspecified until edited; the application does not infer a precise relation type from an ID link.
 
 ## Roadmap
 
-- Add automated unit and browser interaction tests.
+- Expand automated browser interaction and responsive-layout tests.
 - Add architecture-level editing and richer entity history/restore.
-- Improve graph layout and add cross-architecture comparison.
+- Improve graph layout and add guided multi-hop relationship path exploration.
 - Add persistence adapters for a future REST API or database.
 
 ## Screenshots

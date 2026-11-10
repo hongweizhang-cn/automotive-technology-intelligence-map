@@ -26,7 +26,39 @@ export type RelationType =
   | 'depends_on'
   | 'implements'
   | 'uses'
-  | 'integrates';
+  | 'integrates'
+  | 'transports'
+  | 'defines';
+export type ComparisonEntryStatus = 'Available' | 'Not Applicable' | 'Not Available';
+export type TechnologyDomain =
+  | 'vehicle-communication'
+  | 'automotive-ethernet'
+  | 'automotive-diagnostics'
+  | 'automotive-software-architecture'
+  | 'software-defined-vehicle';
+export type ArchitectureComparisonDimension =
+  | 'primaryEnergySource'
+  | 'energyStorage'
+  | 'energyConversion'
+  | 'powerGeneration'
+  | 'powerTransmission'
+  | 'tractionSystem'
+  | 'mainControlUnits'
+  | 'supportingSystems'
+  | 'communicationNetworks'
+  | 'architectureCharacteristics'
+  | 'technicalAdvantages'
+  | 'technicalLimitations'
+  | 'controllerOrganization'
+  | 'functionalAllocation'
+  | 'computingDistribution'
+  | 'networkTopology'
+  | 'communicationBackbone'
+  | 'wiringArchitecture'
+  | 'softwareDeployment'
+  | 'systemIntegration'
+  | 'scalability'
+  | 'typicalApplicationScenarios';
 
 export interface LocalizedText {
   zh: string;
@@ -39,14 +71,34 @@ export interface EvidenceSource {
   url?: string;
   type: string;
   publisher?: string;
+  publicationDate?: string;
   accessedAt?: string;
   note?: LocalizedText;
+}
+
+export interface TechnologyDetails {
+  domain: TechnologyDomain;
+  subdomain?: LocalizedText;
+  layer?: LocalizedText;
+  definition?: LocalizedText;
+  purpose?: LocalizedText;
+  mechanism?: LocalizedText;
+  keyFeatures?: LocalizedText;
+  useCases?: LocalizedText;
+  advantages?: LocalizedText;
+  limitations?: LocalizedText;
+  applicableArchitectures?: string[];
 }
 
 export interface EntityRelation {
   targetId: string;
   type: RelationType;
   description: LocalizedText;
+}
+
+export interface ArchitectureComparisonEntry {
+  status: ComparisonEntryStatus;
+  value: LocalizedText;
 }
 
 export interface Entity {
@@ -73,6 +125,7 @@ export interface Entity {
   retrievedAt?: string;
   verifiedAt?: string;
   verificationStatus?: VerificationStatus;
+  technologyDetails?: TechnologyDetails;
 }
 
 export interface Architecture {
@@ -92,6 +145,7 @@ export interface Architecture {
   sourceUrl?: string;
   sourceTitle?: string;
   updatedAt: string;
+  comparisonProfile?: Partial<Record<ArchitectureComparisonDimension, ArchitectureComparisonEntry>>;
 }
 
 export interface AppData {
