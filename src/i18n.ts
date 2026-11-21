@@ -71,7 +71,14 @@ const resources = {
 
 void i18n.use(initReactI18next).init({
   resources,
-  lng: 'zh',
+  lng: (() => {
+    try {
+      const saved = localStorage.getItem('atim-language');
+      return saved === 'zh' || saved === 'en' ? saved : 'en';
+    } catch {
+      return 'en';
+    }
+  })(),
   fallbackLng: 'en',
   interpolation: { escapeValue: false },
 });

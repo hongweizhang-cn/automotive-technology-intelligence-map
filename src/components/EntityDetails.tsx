@@ -58,6 +58,15 @@ export default function EntityDetails({ entity, entities, language, favorite, on
           <div className="detail-entity-name">{entity.name[language] || entity.name.en}</div>
           <div className="entity-id">{entity.id}</div>
           <div className="tag-row"><span className={`tag tag-${entity.category}`}>{entity.category}</span><span className="tag">{statusLabel(entity.reviewStatus)}</span></div>
+          {entity.reviewStatus === 'Approved' && related.filter((item) => item.reviewStatus === 'Approved' && (item.category === 'technology' || item.category === 'standard')).length > 0 && (
+            <div className="tag-row cross-cutting-badges">
+              {related.filter((item) => item.reviewStatus === 'Approved' && (item.category === 'technology' || item.category === 'standard')).map((item) => (
+                <button key={item.id} className="tag" onClick={() => onSelectRelated(item.id)}>
+                  {item.name[language] || item.name.en}
+                </button>
+              ))}
+            </div>
+          )}
           <button className={`favorite-btn${favorite ? ' active' : ''}`} onClick={onFavorite}>
             {favorite ? <BookmarkCheck size={15} /> : <Bookmark size={15} />}
             {favorite ? (language === 'zh' ? '已加入学习收藏' : 'Saved to learning') : (language === 'zh' ? '加入学习收藏' : 'Save to learning')}

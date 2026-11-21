@@ -1,4 +1,4 @@
-import type { Entity, RelationType } from '../types';
+import type { Entity, RelationshipCategory, RelationType } from '../types';
 
 export interface RelationshipLink {
   sourceId: string;
@@ -41,4 +41,25 @@ export function collapseExplorationStep(path: string[]): string[] {
 
 export function isRelationVisible(type: RelationType, visibleTypes: RelationType[]): boolean {
   return visibleTypes.includes(type);
+}
+
+export function getRelationshipCategory(type: RelationType): RelationshipCategory {
+  if (type === 'communicates_with' || type === 'transports') return 'communication';
+  if (type === 'controls' || type === 'monitors') return 'control';
+  if (type === 'depends_on' || type === 'uses' || type === 'implements') return 'dependency';
+  if (type === 'powered_by' || type === 'distributes_power_to') return 'power_flow';
+  if (type === 'connected_to') return 'network';
+  return 'unclassified';
+}
+
+export function getDirectRelationshipNeighbors(entityId: string, entities: Entity[], visibleTypes: RelationType[]): Set<string> {
+  const neighbors = new Set<string>();
+  for (const entity of entities) {
+    for (const relation of entity.relations ?? []) {
+      if (!visibleTypes.includes(relation.type)) continue;
+      if (entity.id === entityId) neighbors.add(relation.targetId);
+      if (relation.targetId === entityId) neighbors.add(entity.id);
+    }
+  }
+  return neighbors;
 }

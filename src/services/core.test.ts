@@ -6,7 +6,8 @@ import { checkDataQuality } from './dataQuality';
 import { readData, readLearning, saveData, saveLearning, validateImport } from './dataService';
 import { searchEntities } from './entitySearch';
 import { filterTechnologyEntities, getTechnologyRelationLinks, technologyDomains } from './technologyCatalog';
-import { appendExplorationStep, collapseExplorationStep, getDirectRelatedEntityIds, getNodeHighlight, isRelationVisible } from './graphInteractions';
+import { appendExplorationStep, collapseExplorationStep, getDirectRelatedEntityIds, getDirectRelationshipNeighbors, getNodeHighlight, getRelationshipCategory, isRelationVisible } from './graphInteractions';
+import { buildDetailedLayoutPositions, getEdgeRoutingDecision, getOverviewSystemIds } from '../components/VehicleMap';
 import type { AppData, Entity } from '../types';
 
 const storage = new Map<string, string>();
@@ -24,6 +25,66 @@ beforeEach(() => {
 });
 
 describe('reference data and migration', () => {
+  it('builds bounded overview system sets for every propulsion type', () => {
+    for (const architecture of initialData.architectures) {
+      const ids = getOverviewSystemIds(architecture, initialData.entities);
+      expect(ids.length).toBeGreaterThanOrEqual(8);
+      expect(ids.length).toBeLessThanOrEqual(12);
+      expect(ids.every((id) => architecture.systemIds.includes(id))).toBe(true);
+      expect(ids.every((id) => initialData.entities.find((entity) => entity.id === id)?.category === 'system')).toBe(true);
+    }
+  });
+
+  it('derives hierarchy only from explicit contains and part-of relations', () => {
+    const battery = initialData.entities.find((entity) => entity.id === 'sys-battery');
+    const pack = initialData.entities.find((entity) => entity.id === 'hw-battery-pack');
+    expect(battery).toBeDefined();
+    expect(pack?.parentId).toBe('sys-battery');
+    expect(pack?.hierarchyType).toBe('composition');
+  });
+
+  it('classifies relationships and computes true direct neighbors for focus', () => {
+    expect(getRelationshipCategory('communicates_with')).toBe('communication');
+    expect(getRelationshipCategory('controls')).toBe('control');
+    expect(getRelationshipCategory('depends_on')).toBe('dependency');
+    expect(getRelationshipCategory('distributes_power_to')).toBe('power_flow');
+    expect(getRelationshipCategory('related_to')).toBe('unclassified');
+    const neighbors = getDirectRelationshipNeighbors('ecu-bms', initialData.entities, ['monitors', 'controls', 'communicates_with', 'uses']);
+    expect(neighbors.has('ecu-bms-cmu')).toBe(true);
+    expect(neighbors.has('sensor-cell-voltage')).toBe(true);
+  });
+
+  it('creates stable, non-overlapping detailed architecture positions', () => {
+    const battery = initialData.entities.find((entity) => entity.id === 'sys-battery');
+    expect(battery).toBeDefined();
+    if (!battery) return;
+    const directIds = new Set([
+      battery.id,
+      ...battery.relatesTo,
+      ...initialData.entities.filter((entity) => entity.relatesTo.includes(battery.id)).map((entity) => entity.id),
+    ]);
+    const results = initialData.entities.filter((entity) => directIds.has(entity.id));
+    const baseIds = new Set(results.map((entity) => entity.id));
+    const first = buildDetailedLayoutPositions(results, battery.id, baseIds, new Map());
+    const second = buildDetailedLayoutPositions(results, battery.id, baseIds, new Map());
+    expect(Object.fromEntries(first)).toEqual(Object.fromEntries(second));
+
+    for (const [id, position] of first) {
+      expect(position.x).toBeGreaterThanOrEqual(0);
+      expect(position.y).toBeGreaterThanOrEqual(0);
+      for (const [otherId, other] of first) {
+        if (id === otherId) continue;
+        const overlap = Math.abs(position.x - other.x) < 182 && Math.abs(position.y - other.y) < 52;
+        expect(overlap).toBe(false);
+      }
+    }
+  });
+
+  it('selects straight or orthogonal edge routing by node direction', () => {
+    expect(getEdgeRoutingDecision({ x: 100, y: 100 }, { x: 100, y: 220 }).type).toBe('straight');
+    expect(getEdgeRoutingDecision({ x: 100, y: 100 }, { x: 330, y: 218 }).type).toBe('smoothstep');
+  });
+
   it('loads all six propulsion types and all four E/E architectures', () => {
     expect(new Set(initialData.architectures.map((item) => item.propulsion))).toEqual(new Set(['ICE', 'BEV', 'HEV', 'PHEV', 'EREV', 'FCEV']));
     expect(new Set(initialData.architectures.map((item) => item.eeArchitecture))).toEqual(new Set(['Distributed', 'Domain', 'Zonal', 'Centralized']));

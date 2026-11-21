@@ -43,6 +43,8 @@ function isEntity(value: unknown): value is Entity {
     && (item.sources === undefined || Array.isArray(item.sources) && item.sources.every(isEvidenceSource))
     && (item.verificationStatus === undefined || verificationStatuses.includes(item.verificationStatus))
     && (item.technologyDetails === undefined || item.category === 'technology' && isTechnologyDetails(item.technologyDetails))
+    && (item.parentId === undefined || typeof item.parentId === 'string')
+    && (item.hierarchyType === undefined || ['composition', 'subsystem'].includes(item.hierarchyType))
     && (item.appliesTo === undefined || Array.isArray(item.appliesTo) && item.appliesTo.every((id) => propulsions.includes(id)))
     && (item.sourceUrl === undefined || item.sourceUrl === '' || typeof item.sourceUrl === 'string' && isHttpUrl(item.sourceUrl))
     && (item.sourceTitle === undefined || typeof item.sourceTitle === 'string')
@@ -266,6 +268,20 @@ export function validateImport(value: unknown): AppData {
   }
   const data = { version: 2 as const, entities: input.entities.map(migrateEntity), architectures: input.architectures.map(migrateArchitecture) };
   if (!data.entities.every(isEntity)) throw new Error('One or more entities have invalid required fields.');
+  for (const entity of data.entities) {
+    for (const relation of entity.relations ?? []) {
+      if (relation.type === 'contains') {
+        const child = data.entities.find((item) => item.id === relation.targetId);
+        if (child && !child.parentId) {
+          child.parentId = entity.id;
+          child.hierarchyType = 'composition';
+        }
+      } else if (relation.type === 'part_of' && !entity.parentId) {
+        entity.parentId = relation.targetId;
+        entity.hierarchyType = 'subsystem';
+      }
+    }
+  }
   const ids = data.entities.map((entity) => entity.id);
   if (new Set(ids).size !== ids.length) throw new Error('Import contains duplicate entity IDs.');
   if (ids.some((id) => !/^[a-z0-9][a-z0-9-]*$/.test(id))) throw new Error('Entity IDs must use lowercase letters, numbers, and hyphens.');
@@ -279,6 +295,17 @@ export function validateImport(value: unknown): AppData {
     for (const relation of entity.relations ?? []) {
       if (relation.targetId === entity.id) throw new Error(`Entity "${entity.id}" cannot reference itself.`);
       if (!known.has(relation.targetId)) throw new Error(`Entity "${entity.id}" references missing entity "${relation.targetId}".`);
+    }
+    if (entity.parentId !== undefined) {
+      if (!known.has(entity.parentId)) throw new Error(`Entity "${entity.id}" references missing parent "${entity.parentId}".`);
+      if (entity.parentId === entity.id) throw new Error(`Entity "${entity.id}" cannot be its own parent.`);
+      const visited = new Set<string>([entity.id]);
+      let parentId: string | undefined = entity.parentId;
+      while (parentId) {
+        if (visited.has(parentId)) throw new Error(`Hierarchy cycle detected at entity "${parentId}".`);
+        visited.add(parentId);
+        parentId = data.entities.find((item) => item.id === parentId)?.parentId;
+      }
     }
     if (entity.createdBy === 'Agent' && entity.reviewStatus === 'Approved') {
       throw new Error(`Agent-created entity "${entity.id}" cannot be marked approved.`);

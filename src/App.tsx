@@ -5,7 +5,7 @@ import {
   Settings2, ShieldCheck, Sparkles, X, Zap,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import VehicleMap from './components/VehicleMap';
+import VehicleMap, { type MapViewMode } from './components/VehicleMap';
 import EntityDetails from './components/EntityDetails';
 import TechnologyExplorer from './pages/TechnologyExplorer';
 import DataManagement from './pages/DataManagement';
@@ -53,14 +53,21 @@ export default function App() {
   const [data, setData] = useState<AppData>(stored.data);
   const [history, setHistory] = useState(safeHistory);
   const [learning, setLearning] = useState(safeLearning);
-  const [language, setLanguage] = useState<Language>('zh');
+  const [language, setLanguage] = useState<Language>(() => {
+    try {
+      const saved = localStorage.getItem('atim-language');
+      return saved === 'zh' || saved === 'en' ? saved : 'en';
+    } catch {
+      return 'en';
+    }
+  });
   const [view, setView] = useState<View>('architecture');
   const [propulsion, setPropulsion] = useState<Propulsion>('BEV');
   const [selectedArchitectureId, setSelectedArchitectureId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedSystem, setSelectedSystem] = useState<string | null>(null);
   const [selectedEcu, setSelectedEcu] = useState<string | null>(null);
-  const [visibleCategories, setVisibleCategories] = useState<string[]>(['system', 'ecu', 'sensor', 'actuator', 'hardware', 'network', 'technology', 'standard']);
+  const [visibleCategories, setVisibleCategories] = useState<string[]>(['system']);
   const [visibleRelationTypes, setVisibleRelationTypes] = useState<RelationType[]>(relationTypes);
   const [selectedRelationship, setSelectedRelationship] = useState<{ source: Entity; target: Entity; relation: EntityRelation } | null>(null);
   const [mapSearch, setMapSearch] = useState('');
@@ -70,6 +77,7 @@ export default function App() {
   const [searchEeArchitecture, setSearchEeArchitecture] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [resetSignal, setResetSignal] = useState(0);
+  const [mapViewMode, setMapViewMode] = useState<MapViewMode>('structure');
   const [toast, setToast] = useState(stored.warning ?? '');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -221,6 +229,17 @@ export default function App() {
   };
   const changePropulsion = (id: Propulsion) => {
     setPropulsion(id); setSelectedArchitectureId(null); setSelectedSystem(null); setSelectedEcu(null); setSelectedId(null); setSelectedRelationship(null); setMapSearch('');
+    setVisibleCategories(['system']);
+  };
+  const enterSystem = (id: string | null) => {
+    setSelectedSystem(id);
+    setSelectedEcu(null);
+    setVisibleCategories(id ? ['system', 'ecu', 'sensor', 'actuator', 'hardware', 'network', 'technology', 'standard'] : ['system']);
+  };
+  const toggleLanguage = () => {
+    const next: Language = language === 'zh' ? 'en' : 'zh';
+    setLanguage(next);
+    try { localStorage.setItem('atim-language', next); } catch { /* language still changes for this session */ }
   };
   const navigateToEntity = (id: string) => {
     const entity = entityById.get(id);
@@ -229,7 +248,7 @@ export default function App() {
     setSelectedId(id);
     if (entity.category === 'system' || entity.category === 'ecu' || entity.category === 'network') {
       setView('architecture');
-      if (entity.category === 'system') { setSelectedSystem(id); setSelectedEcu(null); }
+      if (entity.category === 'system') { enterSystem(id); }
       if (entity.category === 'ecu') {
         const parent = entity.relatesTo.find((item) => architecture.systemIds.includes(item));
         if (parent) setSelectedSystem(parent);
@@ -253,7 +272,7 @@ export default function App() {
     if (mapped.appliesTo?.includes(propulsion) === false && mapped.appliesTo?.length) setPropulsion(mapped.appliesTo[0]);
     setSelectedRelationship(null);
     setSelectedId(mapped.id);
-    if (mapped.category === 'system') { setSelectedSystem(mapped.id); setSelectedEcu(null); }
+    if (mapped.category === 'system') { enterSystem(mapped.id); }
     else if (mapped.category === 'ecu') {
       const parent = mapped.relatesTo.find((item) => architecture.systemIds.includes(item));
       setSelectedSystem(parent ?? null);
@@ -330,7 +349,7 @@ export default function App() {
         </div>
         <div className="header-actions">
           <span className="build-tag"><span />{t('version')}</span>
-          <button className="language-btn" onClick={() => setLanguage(language === 'zh' ? 'en' : 'zh')}><Globe2 size={15} />{t('language')}</button>
+          <button className="language-btn" onClick={toggleLanguage} aria-label={language === 'zh' ? 'Switch to English' : '切换到中文'}><Globe2 size={15} />{t('language')}</button>
           <div className="user-avatar" title="Local workspace">H</div>
         </div>
       </header>
@@ -363,19 +382,37 @@ export default function App() {
             <div className="reference-note"><Sparkles size={14} /><span><b>{t('reference')}</b> · {architecture.topology[language] || architecture.topology.en}</span><small>{t('verified')}</small></div>
             <div className="map-toolbar panel-card">
               <div className="breadcrumbs">
-                <button onClick={() => { setSelectedSystem(null); setSelectedEcu(null); setSelectedId(null); }}>{localizedPropulsion(propulsion)}</button>
+                <button onClick={() => { enterSystem(null); setSelectedId(null); setSelectedRelationship(null); }}>{localizedPropulsion(propulsion)}</button>
                 {activeSystem && <><span>/</span><button onClick={() => { setSelectedEcu(null); setSelectedId(activeSystem.id); }}>{activeSystem.name[language] || activeSystem.name.en}</button></>}
                 {activeEcu && <><span>/</span><b>{activeEcu.name[language] || activeEcu.name.en}</b></>}
               </div>
-              <div className="map-actions"><div className="map-search"><Search size={14} /><input value={mapSearch} onChange={(event) => setMapSearch(event.target.value)} placeholder={language === 'zh' ? '搜索节点…' : 'Search nodes…'} />{mapSearch && <button className="icon-btn" onClick={() => setMapSearch('')}><X size={13} /></button>}</div>
-                {selectedSystem && <button className="button-quiet" onClick={() => { setSelectedSystem(null); setSelectedEcu(null); setSelectedId(null); }}><ArrowLeft size={14} />{t('back')}</button>}
-                <button className="reset-btn" onClick={() => { setSelectedSystem(null); setSelectedEcu(null); setSelectedId(null); setResetSignal((value) => value + 1); }}><span>⤢</span>{t('reset')}</button>
+              <div className="map-actions">
+                <div className="view-mode-switch" aria-label="Vehicle map view mode">
+                  {([
+                    ['structure', language === 'zh' ? '系统组成' : 'System Structure'],
+                    ['relationship', language === 'zh' ? '关系探索' : 'Relationship View'],
+                    ['full', language === 'zh' ? '完整图谱' : 'Full Graph'],
+                  ] as Array<[MapViewMode, string]>).map(([mode, label]) => (
+                    <button key={mode} className={mapViewMode === mode ? 'active' : ''} onClick={() => setMapViewMode(mode)}>{label}</button>
+                  ))}
+                </div>
+                <div className="map-search"><Search size={14} /><input value={mapSearch} onChange={(event) => setMapSearch(event.target.value)} placeholder={language === 'zh' ? '搜索节点…' : 'Search nodes…'} />{mapSearch && <button className="icon-btn" onClick={() => setMapSearch('')}><X size={13} /></button>}</div>
+                {selectedSystem && <button className="button-quiet" onClick={() => { enterSystem(null); setSelectedId(null); setSelectedRelationship(null); }}><ArrowLeft size={14} />{t('back')}</button>}
+                <button className="reset-btn" onClick={() => { enterSystem(null); setSelectedId(null); setSelectedRelationship(null); setResetSignal((value) => value + 1); }}><span>⤢</span>{t('reset')}</button>
               </div>
             </div>
             <div className="map-workspace">
               <section className="map-stage panel-card">
-                <div className="map-legend"><span><i style={{ background: categoryColors.system }} />{labelCategory('system')}</span><span><i style={{ background: categoryColors.ecu }} />{labelCategory('ecu')}</span><span><i style={{ background: categoryColors.network }} />{labelCategory('network')}</span><span className="legend-hint">{language === 'zh' ? '参考拓扑分组，不表示具体车型安装位置 · 点击系统或 ECU 查看关系' : 'Reference topology grouping, not vehicle mounting locations · select a system or ECU to inspect links'}</span></div>
-                <VehicleMap architecture={architecture} entities={data.entities.filter((entity) => entity.reviewStatus === 'Approved')} language={language} selectedSystem={selectedSystem} selectedEcu={selectedEcu} selectedId={selectedId} visibleCategories={visibleCategories} visibleRelationTypes={visibleRelationTypes} onSelect={selectMapEntity} onSystem={setSelectedSystem} onEcu={setSelectedEcu} onEdge={selectRelationship} selectedRelationKey={selectedRelationship ? `link:${selectedRelationship.source.id}:${selectedRelationship.target.id}:${selectedRelationship.relation.type}` : null} search={mapSearch} resetSignal={resetSignal} />
+                <div className="map-legend">
+                  <span><i style={{ background: categoryColors.system }} />{labelCategory('system')}</span><span><i style={{ background: categoryColors.ecu }} />{labelCategory('ecu')}</span><span><i style={{ background: categoryColors.network }} />{labelCategory('network')}</span>
+                  {mapViewMode !== 'structure' && <>
+                    <span><i style={{ background: '#62b8d6' }} />{language === 'zh' ? '通信' : 'Communication'}</span>
+                    <span><i style={{ background: '#77a5df' }} />{language === 'zh' ? '控制' : 'Control'}</span>
+                    <span><i style={{ background: '#d8b45e' }} />{language === 'zh' ? '能量流' : 'Power flow'}</span>
+                  </>}
+                  <span className="legend-hint">{language === 'zh' ? '参考拓扑分组，不表示具体车型安装位置 · 点击系统或 ECU 查看关系' : 'Reference topology grouping, not vehicle mounting locations · select a system or ECU to inspect links'}</span>
+                </div>
+                <VehicleMap architecture={architecture} entities={data.entities.filter((entity) => entity.reviewStatus === 'Approved')} language={language} viewMode={mapViewMode} selectedSystem={selectedSystem} selectedEcu={selectedEcu} selectedId={selectedId} visibleCategories={visibleCategories} visibleRelationTypes={visibleRelationTypes} onSelect={selectMapEntity} onSystem={enterSystem} onEcu={setSelectedEcu} onEdge={selectRelationship} selectedRelationKey={selectedRelationship ? `link:${selectedRelationship.source.id}:${selectedRelationship.target.id}:${selectedRelationship.relation.type}` : null} search={mapSearch} resetSignal={resetSignal} />
                 <div className="map-scale"><span className="live-dot" />{language === 'zh' ? '参考拓扑 · 交互视图' : 'Reference topology · interactive view'}<span className="scale-divider" />{selectedSystem ? language === 'zh' ? '系统级探索' : 'System exploration' : language === 'zh' ? '整车总览' : 'Vehicle overview'}</div>
               </section>
               <aside className="layers-panel panel-card"><div className="panel-title"><span>{t('layers')}</span><button className="text-button" onClick={() => setVisibleCategories([...categories])}>{t('showAll')}</button></div>
@@ -383,6 +420,7 @@ export default function App() {
                 <details className="relationship-filter">
                   <summary>{language === 'zh' ? '关系类型' : 'Relationship types'}</summary>
                   <button className="text-button" onClick={() => setVisibleRelationTypes((current) => availableRelationTypes.every((type) => current.includes(type)) ? [] : availableRelationTypes)}>{language === 'zh' ? '全选 / 清空' : 'Select all / none'}</button>
+                  <button className="text-button" onClick={() => setVisibleRelationTypes([])}>{language === 'zh' ? '清除筛选' : 'Clear Filters'}</button>
                   {availableRelationTypes.map((type) => <label key={type}><input type="checkbox" checked={visibleRelationTypes.includes(type)} onChange={(event) => setVisibleRelationTypes((current) => event.target.checked ? [...current, type] : current.filter((item) => item !== type))} /><span>{relationTypeLabels[type][language]}</span></label>)}
                 </details>
                 <div className="layer-tip"><ShieldCheck size={14} /><span>{language === 'zh' ? '仅显示已审核的参考实体' : 'Only approved reference entities shown'}</span></div>

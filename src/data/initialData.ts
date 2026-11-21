@@ -389,6 +389,23 @@ setRelations('sys-hybrid-control', [
   relation('ecu-hcu', 'controls', '混合动力控制功能的逻辑边界，可能集成于其他控制器。', 'Logical boundary for hybrid control; may be integrated into another controller.'),
 ]);
 
+for (const entity of entities) {
+  for (const relation of entity.relations ?? []) {
+    if (relation.type === 'contains') {
+      const child = entities.find((item) => item.id === relation.targetId);
+      if (child && !child.parentId) {
+        child.parentId = entity.id;
+        child.hierarchyType = 'composition';
+      }
+    } else if (relation.type === 'part_of') {
+      if (!entity.parentId) {
+        entity.parentId = relation.targetId;
+        entity.hierarchyType = 'subsystem';
+      }
+    }
+  }
+}
+
 const propulsionNames: Record<Propulsion, [string, string, string, string]> = {
   ICE: ['传统燃油车', 'Internal Combustion Engine', '内燃机驱动的通用参考架构。', 'Illustrative reference architecture with an internal combustion engine.'],
   BEV: ['纯电动汽车', 'Battery Electric Vehicle', '动力电池与电机驱动的通用参考架构。', 'Illustrative reference architecture with traction battery and electric drive.'],

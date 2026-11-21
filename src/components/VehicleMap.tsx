@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Background, Controls, ReactFlow, ReactFlowProvider,
-  type Edge, type Node, type NodeProps, Handle, MarkerType, Position, useReactFlow,
+  type Edge, type Node, type NodeProps, Handle, MarkerType, Position,
+  useReactFlow,
 } from '@xyflow/react';
 import { BatteryCharging, Cpu, Network, Radio, Settings2, ShieldCheck, Thermometer, Zap } from 'lucide-react';
 import type { Architecture, Entity, Language, RelationType } from '../types';
-import { appendExplorationStep, collapseExplorationStep, getDirectRelatedEntityIds, getNodeHighlight, isRelationVisible } from '../services/graphInteractions';
+import { appendExplorationStep, collapseExplorationStep, getDirectRelatedEntityIds, getDirectRelationshipNeighbors, getNodeHighlight, getRelationshipCategory, isRelationVisible } from '../services/graphInteractions';
+
+export type MapViewMode = 'structure' | 'relationship' | 'full';
 
 const icons = {
   system: Settings2, ecu: Cpu, sensor: Radio, actuator: Zap, hardware: Cpu,
@@ -19,21 +22,116 @@ function MapNode({ data }: NodeProps<Node<{ entity: Entity; language: Language; 
     <div className={`map-node node-${entity.category}${selected ? ' selected' : ''}${adjacent ? ' adjacent' : ''}${dimmed ? ' dimmed' : ''}${path ? ' explored-path' : ''}`}>
       <Handle id="target-top" type="target" position={Position.Top} />
       <Handle id="target-left" type="target" position={Position.Left} />
+      <Handle id="target-right" type="target" position={Position.Right} />
+      <Handle id="target-bottom" type="target" position={Position.Bottom} />
       <Icon size={16} />
       <span>{entity.name[language] || entity.name.en}</span>
       <small>{entity.category.toUpperCase()}</small>
       <Handle id="source-bottom" type="source" position={Position.Bottom} />
       <Handle id="source-right" type="source" position={Position.Right} />
+      <Handle id="source-left" type="source" position={Position.Left} />
+      <Handle id="source-top" type="source" position={Position.Top} />
     </div>
   );
 }
 
-const nodeTypes = { entity: MapNode };
+function MapGroup({ data }: NodeProps<Node<{ label: string; language: Language }>>) {
+  return <div className="map-group"><span>{data.label}</span></div>;
+}
+
+const nodeTypes = { entity: MapNode, group: MapGroup };
+
+const overviewSystemIds: Record<Architecture['propulsion'], string[]> = {
+  ICE: ['sys-engine', 'sys-fuel', 'sys-ignition', 'sys-transmission', 'sys-aftertreatment', 'sys-powertrain', 'sys-thermal', 'sys-chassis'],
+  BEV: ['sys-battery', 'sys-electric-drive', 'sys-charging', 'sys-hv-distribution', 'sys-powertrain', 'sys-thermal', 'sys-chassis', 'sys-adas'],
+  HEV: ['sys-engine', 'sys-electric-drive', 'sys-battery', 'sys-hybrid-control', 'sys-transmission', 'sys-powertrain', 'sys-thermal', 'sys-chassis'],
+  PHEV: ['sys-engine', 'sys-electric-drive', 'sys-battery', 'sys-hybrid-control', 'sys-charging', 'sys-transmission', 'sys-powertrain', 'sys-thermal'],
+  EREV: ['sys-range-extender', 'sys-electric-drive', 'sys-battery', 'sys-charging', 'sys-powertrain', 'sys-thermal', 'sys-chassis', 'sys-adas'],
+  FCEV: ['sys-fuel-cell', 'sys-hydrogen', 'sys-air-supply', 'sys-electric-drive', 'sys-battery', 'sys-powertrain', 'sys-thermal', 'sys-chassis'],
+};
+
+export function getOverviewSystemIds(architecture: Architecture, entities: Entity[]): string[] {
+  const byId = new Map(entities.map((entity) => [entity.id, entity]));
+  return overviewSystemIds[architecture.propulsion]
+    .filter((id) => architecture.systemIds.includes(id))
+    .filter((id) => byId.get(id)?.category === 'system')
+    .slice(0, 12);
+}
+
+export type LayoutPosition = { x: number; y: number };
+
+export function buildDetailedLayoutPositions(
+  results: Entity[],
+  relationshipRoot: string | null,
+  baseIds: Set<string>,
+  expandedEntities: Map<string, Entity>,
+): Map<string, LayoutPosition> {
+  const positions = new Map<string, LayoutPosition>();
+  if (!relationshipRoot) return positions;
+
+  const root = results.find((entity) => entity.id === relationshipRoot);
+  if (root) positions.set(root.id, { x: 60, y: 230 });
+
+  const categoryColumns: Record<Entity['category'], number> = {
+    system: 0,
+    ecu: 1,
+    hardware: 2,
+    network: 5,
+    sensor: 3,
+    actuator: 4,
+    technology: 5,
+    standard: 5,
+    company: 6,
+  };
+  const categoryOrders: Entity['category'][] = ['ecu', 'hardware', 'sensor', 'actuator', 'network', 'technology', 'standard', 'company', 'system'];
+  const columnRows: Partial<Record<number, number>> = {};
+
+  for (const category of categoryOrders) {
+    const entitiesInColumn = results
+      .filter((entity) => entity.category === category && entity.id !== relationshipRoot)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    entitiesInColumn.forEach((entity) => {
+      const columnIndex = categoryColumns[category];
+      const rowIndex = columnRows[columnIndex] ?? 0;
+      if (baseIds.has(entity.id)) {
+        positions.set(entity.id, { x: 300 + columnIndex * 230, y: 70 + rowIndex * 118 });
+      } else {
+        const expandedIndex = [...expandedEntities.keys()].indexOf(entity.id);
+        positions.set(entity.id, { x: 300 + columnIndex * 230, y: 70 + (expandedIndex + rowIndex) * 118 });
+      }
+      columnRows[columnIndex] = rowIndex + 1;
+    });
+  }
+  return positions;
+}
+
+export function getEdgeRoutingDecision(source: LayoutPosition, target: LayoutPosition): {
+  type: 'straight' | 'smoothstep';
+  sourceHandle: string;
+  targetHandle: string;
+} {
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  const type = Math.abs(dy) < 8 || Math.abs(dx) < 8 ? 'straight' : 'smoothstep';
+  if (Math.abs(dy) >= Math.abs(dx)) {
+    return {
+      type,
+      sourceHandle: dy >= 0 ? 'source-bottom' : 'source-top',
+      targetHandle: dy >= 0 ? 'target-top' : 'target-bottom',
+    };
+  }
+  return {
+    type,
+    sourceHandle: dx >= 0 ? 'source-right' : 'source-left',
+    targetHandle: dx >= 0 ? 'target-left' : 'target-right',
+  };
+}
 
 interface Props {
   architecture: Architecture;
   entities: Entity[];
   language: Language;
+  viewMode: MapViewMode;
   selectedSystem: string | null;
   selectedEcu: string | null;
   selectedId: string | null;
@@ -49,13 +147,21 @@ interface Props {
 }
 
 function VehicleMapCanvas({
-  architecture, entities, language, selectedSystem, selectedEcu, selectedId,
+  architecture, entities, language, viewMode, selectedSystem, selectedEcu, selectedId,
   visibleCategories, visibleRelationTypes, onSelect, onSystem, onEcu, onEdge,
   selectedRelationKey, search, resetSignal,
 }: Props) {
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  const [elkPositions, setElkPositions] = useState<Record<string, LayoutPosition>>({});
   const { fitView } = useReactFlow();
   useEffect(() => setExpandedIds([]), [architecture.id, architecture.eeArchitecture, selectedSystem, selectedEcu, resetSignal]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fitView({ padding: 0.16, maxZoom: 1, duration: 220 });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [architecture.id, architecture.eeArchitecture, selectedSystem, selectedEcu, resetSignal, fitView]);
   const entityById = useMemo(() => new Map(entities.map((entity) => [entity.id, entity])), [entities]);
   const system = selectedSystem ? entityById.get(selectedSystem) : undefined;
   const ecu = selectedEcu ? entityById.get(selectedEcu) : undefined;
@@ -82,9 +188,9 @@ function VehicleMapCanvas({
         .filter((item) => item.category !== 'ecu' || architecture.ecuIds.includes(item.id))];
       relationshipRoot = system.id;
     } else {
-      candidates = architecture.systemIds.map((id) => entityById.get(id)).filter((item): item is Entity => Boolean(item));
-      candidates.push(...architecture.ecuIds.map((id) => entityById.get(id)).filter((item): item is Entity => Boolean(item)));
-      candidates.push(...['net-canfd', 'net-lin', 'net-ethernet'].map((id) => entityById.get(id)).filter((item): item is Entity => Boolean(item)));
+      candidates = getOverviewSystemIds(architecture, entities)
+        .map((id) => entityById.get(id))
+        .filter((item): item is Entity => Boolean(item));
     }
 
     const baseIds = new Set(candidates.map((entity) => entity.id));
@@ -101,23 +207,21 @@ function VehicleMapCanvas({
     const results = query ? filtered.filter((entity) => `${entity.name.en} ${entity.name.zh} ${entity.description.en}`.toLocaleLowerCase().includes(query)) : filtered;
     const systems = results.filter((entity) => entity.category === 'system');
     const ecus = results.filter((entity) => entity.category === 'ecu');
-    const selectedNeighbors = new Set(selectedId ? getDirectRelatedEntityIds(selectedId, entities) : []);
-    const baseNodes = results.filter((entity) => baseIds.has(entity.id));
-    const expansionStartY = Math.max(620, ...baseNodes.map((entity) => {
-      const index = baseNodes.indexOf(entity);
-      return 55 + Math.floor(index / 4) * 112;
-    })) + 120;
-    const nodes: Node<{ entity: Entity; language: Language; selected: boolean; adjacent: boolean; dimmed: boolean; path: boolean }>[] = results.map((entity, index) => {
+    const selectedNeighbors = new Set(selectedId ? getDirectRelationshipNeighbors(selectedId, entities, visibleRelationTypes) : []);
+    const detailedPositions = relationshipRoot
+      ? buildDetailedLayoutPositions(results, relationshipRoot, baseIds, expandedEntities)
+      : null;
+    const nodes: Node<any>[] = results.map((entity, index) => {
       let x = 70 + (index % 4) * 205;
       let y = 55 + Math.floor(index / 4) * 112;
-      if (!baseIds.has(entity.id)) {
-        const expandedIndex = [...expandedEntities.keys()].indexOf(entity.id);
-        x = 70 + (expandedIndex % 4) * 205;
-        y = expansionStartY + Math.floor(expandedIndex / 4) * 112;
-      } else if (relationshipRoot) {
-        const isRoot = entity.id === relationshipRoot;
-        x = isRoot ? 66 : 300 + ((index - 1) % 3) * 205;
-        y = isRoot ? 160 : 62 + Math.floor((index - 1) / 3) * 112;
+      if (detailedPositions?.has(entity.id)) {
+        const position = detailedPositions.get(entity.id)!;
+        x = position.x;
+        y = position.y;
+      } else if (!selectedSystem && !selectedEcu) {
+        const columns = 4;
+        x = 95 + (index % columns) * 205;
+        y = 95 + Math.floor(index / columns) * 145;
       } else if (architecture.eeArchitecture === 'Distributed' && entity.category === 'ecu') {
         const ecuIndex = ecus.findIndex((item) => item.id === entity.id);
         const parentIndex = systems.findIndex((item) => entity.relatesTo.includes(item.id) || item.relatesTo.includes(entity.id));
@@ -155,11 +259,23 @@ function VehicleMapCanvas({
         else if (entity.category === 'system') { const systemIndex = systems.findIndex((item) => item.id === entity.id); x = 70 + (systemIndex % 4) * 205; y = 190 + Math.floor(systemIndex / 4) * 112; }
       }
       return {
-        id: entity.id, type: 'entity', position: { x, y },
+        id: entity.id, type: 'entity', position: elkPositions[entity.id] ?? { x, y },
         data: { entity, language, ...getNodeHighlight(entity.id, selectedId, selectedNeighbors, expandedIds) },
       };
     });
+    if (viewMode === 'structure' && relationshipRoot && system) {
+      nodes.unshift({
+        id: `group:${system.id}`,
+        type: 'group',
+        position: { x: 260, y: 30 },
+        zIndex: -1,
+        style: { width: 1120, height: 760 },
+        data: { label: system.name[language] || system.name.en, language },
+      });
+    }
     const resultIds = new Set(results.map((entity) => entity.id));
+    const nodePositionById = new Map(nodes.map((node) => [node.id, node.position]));
+    const pairEdgeCount = new Map<string, number>();
     const edges: Edge[] = [];
     const relationLabels: Record<string, [string, string]> = {
       contains: ['包含', 'contains'], part_of: ['属于', 'part of'], controls: ['控制', 'controls'], monitors: ['监测', 'monitors'],
@@ -182,22 +298,60 @@ function VehicleMapCanvas({
         if (seenEdges.has(edgeId)) continue;
         seenEdges.add(edgeId);
         if (!isRelationVisible(link.type, visibleRelationTypes)) continue;
+        if (viewMode === 'structure' && ['contains', 'part_of'].includes(link.type)) continue;
+        if (viewMode === 'relationship' && ![
+          'communicates_with', 'controls', 'monitors', 'depends_on',
+          'powered_by', 'distributes_power_to', 'connected_to', 'uses',
+        ].includes(link.type)) continue;
+        if (!selectedSystem && !selectedEcu && link.type === 'related_to') continue;
+        if (!selectedSystem && !selectedEcu && ![
+          'contains', 'part_of', 'controls', 'monitors', 'communicates_with',
+          'connected_to', 'powered_by', 'distributes_power_to', 'integrates', 'transports',
+        ].includes(link.type)) continue;
         const label = relationLabels[link.type]?.[language === 'zh' ? 0 : 1]
           ?? (link.type === 'related_to' ? undefined : link.type);
         const highlighted = selectedId === source.id || selectedId === link.targetId;
         const selectedEdge = selectedRelationKey === edgeId;
         const pathEdge = expandedIds.includes(source.id) && expandedIds.includes(link.targetId);
+        const relationshipCategory = getRelationshipCategory(link.type);
+        const sourcePosition = nodePositionById.get(source.id);
+        const targetPosition = nodePositionById.get(link.targetId);
+        const pairKey = [source.id, link.targetId].sort().join(':');
+        const pairIndex = pairEdgeCount.get(pairKey) ?? 0;
+        pairEdgeCount.set(pairKey, pairIndex + 1);
+        const routing = getEdgeRoutingDecision(
+          sourcePosition ?? { x: 0, y: 0 },
+          targetPosition ?? { x: 0, y: 0 },
+        );
+        let sourceHandle = routing.sourceHandle;
+        let targetHandle = routing.targetHandle;
+        const dy = (targetPosition?.y ?? 0) - (sourcePosition?.y ?? 0);
+        if (pairIndex % 2 === 1) {
+          sourceHandle = dy >= 0 ? 'source-right' : 'source-left';
+          targetHandle = dy >= 0 ? 'target-left' : 'target-right';
+        }
         edges.push({
-          id: edgeId, source: source.id, target: link.targetId, type: 'smoothstep',
-          sourceHandle: (edges.length % 2) ? 'source-right' : 'source-bottom',
-          targetHandle: (edges.length % 2) ? 'target-left' : 'target-top',
+          id: edgeId, source: source.id, target: link.targetId, type: routing.type,
+          sourceHandle,
+          targetHandle,
           data: { sourceId: source.id, targetId: link.targetId, relationType: link.type, description: link.description },
-          label, markerEnd: { type: MarkerType.ArrowClosed, color: selectedEdge ? '#ffe08a' : highlighted ? '#77e5d7' : '#547083' },
+          label: hoveredEdgeId === edgeId ? label : undefined,
+          markerEnd: { type: MarkerType.ArrowClosed, color: selectedEdge ? '#ffe08a' : highlighted ? '#77e5d7' : '#547083' },
           style: {
-            stroke: selectedEdge ? '#ffe08a' : highlighted ? '#77e5d7' : pathEdge ? '#52c8ba' : '#365b70',
+            stroke: selectedEdge ? '#ffe08a' : highlighted ? '#77e5d7'
+              : relationshipCategory === 'communication' ? '#62b8d6'
+                : relationshipCategory === 'control' ? '#77a5df'
+                  : relationshipCategory === 'dependency' ? '#a98bd7'
+                    : relationshipCategory === 'power_flow' ? '#d8b45e'
+                      : relationshipCategory === 'network' ? '#55c3ad'
+                        : pathEdge ? '#52c8ba' : '#365b70',
             strokeWidth: selectedEdge ? 3 : highlighted ? 2.5 : 1.5,
             opacity: selectedId && !highlighted && !pathEdge ? 0.13 : 0.82,
-            ...(source.category === 'network' ? { strokeDasharray: '4 3' } : {}),
+            ...(source.category === 'network' || link.type === 'communicates_with'
+              ? { strokeDasharray: '5 4' }
+              : link.type === 'depends_on'
+                ? { strokeDasharray: '2 4' }
+                : {}),
           },
           labelStyle: { fill: selectedId && !highlighted ? '#607382' : '#a9becb', fontSize: 9 },
           labelBgStyle: { fill: '#111923', fillOpacity: 0.9 },
@@ -205,10 +359,49 @@ function VehicleMapCanvas({
       }
     }
     return { nodes, edges, expandedEntities };
-  }, [architecture, entityById, entities, language, selectedId, selectedSystem, selectedEcu, system, ecu, visibleCategories, visibleRelationTypes, search, expandedIds, selectedRelationKey]);
+  }, [architecture, entityById, entities, language, viewMode, selectedId, selectedSystem, selectedEcu, system, ecu, visibleCategories, visibleRelationTypes, search, expandedIds, selectedRelationKey, hoveredEdgeId, elkPositions]);
   useEffect(() => {
-    if (expandedIds.length) void fitView({ padding: 0.18, maxZoom: 1, duration: 250 });
-  }, [expandedIds, fitView]);
+    let cancelled = false;
+    const structuralNodes = graph.nodes.filter((node) => node.type === 'entity');
+    if (!structuralNodes.length) return;
+    const structuralNodeIds = new Set(structuralNodes.map((node) => node.id));
+    const layout = {
+      id: 'root',
+      layoutOptions: {
+        'elk.algorithm': 'layered',
+        'elk.direction': 'RIGHT',
+        'elk.spacing.nodeNode': '80',
+        'elk.layered.spacing.nodeNodeBetweenLayers': '100',
+        'elk.edgeRouting': 'ORTHOGONAL',
+        'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+        'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+      },
+      children: structuralNodes.map((node) => ({
+        id: node.id,
+        width: 182,
+        height: 62,
+      })),
+      edges: graph.edges
+        .filter((edge) => structuralNodeIds.has(edge.source) && structuralNodeIds.has(edge.target))
+        .map((edge) => ({
+          id: edge.id,
+          sources: [edge.source],
+          targets: [edge.target],
+        })),
+    };
+    void import('elkjs/lib/elk.bundled.js').then(({ default: ELK }) => {
+      const elk = new ELK();
+      return elk.layout(layout);
+    }).then((result) => {
+      if (cancelled) return;
+      const next: Record<string, LayoutPosition> = {};
+      for (const child of result?.children ?? []) next[child.id] = { x: child.x ?? 0, y: child.y ?? 0 };
+      setElkPositions(next);
+    }).catch(() => {
+      if (!cancelled) setElkPositions({});
+    });
+    return () => { cancelled = true; };
+  }, [architecture.id, architecture.eeArchitecture, viewMode, selectedSystem, selectedEcu, expandedIds.join('|'), resetSignal]);
 
   const expandSelected = () => {
     if (!selectedId || expandedIds.includes(selectedId)) return;
@@ -236,7 +429,7 @@ function VehicleMapCanvas({
   };
 
   return (
-    <div className="map-canvas">
+    <div className="map-canvas" data-edge-count={graph.edges.length} data-node-count={graph.nodes.length}>
       <svg className="car-outline" viewBox="0 0 760 410" aria-hidden="true">
         <path d="M259 24 Q380 -2 501 24 L556 68 Q586 100 596 149 L624 188 L624 318 Q620 350 590 360 L170 360 Q140 350 136 318 L136 188 L164 149 Q174 100 204 68 Z" />
         <path d="M246 48 Q380 28 514 48 L545 83 L565 145 L195 145 L215 83 Z" />
@@ -255,6 +448,8 @@ function VehicleMapCanvas({
           const data = edge.data as { sourceId?: string; targetId?: string; relationType?: RelationType } | undefined;
           if (data?.sourceId && data.targetId && data.relationType) onEdge(data.sourceId, data.targetId, data.relationType);
         }}
+        onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
+        onEdgeMouseLeave={() => setHoveredEdgeId(null)}
         onPaneClick={() => { onSelect(''); }}
         fitView
         fitViewOptions={{ padding: 0.18, maxZoom: 1 }}
@@ -268,6 +463,9 @@ function VehicleMapCanvas({
         <Controls showInteractive={false} />
       </ReactFlow>
       {selectedId && <div className="map-exploration-controls">
+        <button className="button-secondary" onClick={() => onSelect('')}>
+          {language === 'zh' ? '清除焦点' : 'Clear Focus'}
+        </button>
         <button className="button-secondary" disabled={!selectedDirectCount || expandedIds.includes(selectedId)} onClick={expandSelected}>
           {language === 'zh' ? `展开一层关联 (${selectedDirectCount})` : `Expand one level (${selectedDirectCount})`}
         </button>

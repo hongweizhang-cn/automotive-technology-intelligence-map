@@ -29,6 +29,7 @@ export type RelationType =
   | 'integrates'
   | 'transports'
   | 'defines';
+export type RelationshipCategory = 'communication' | 'control' | 'dependency' | 'power_flow' | 'network' | 'unclassified';
 export type ComparisonEntryStatus = 'Available' | 'Not Applicable' | 'Not Available';
 export type TechnologyDomain =
   | 'vehicle-communication'
@@ -96,6 +97,8 @@ export interface EntityRelation {
   description: LocalizedText;
 }
 
+export type EntityHierarchyType = 'composition' | 'subsystem';
+
 export interface ArchitectureComparisonEntry {
   status: ComparisonEntryStatus;
   value: LocalizedText;
@@ -108,6 +111,8 @@ export interface Entity {
   description: LocalizedText;
   relatesTo: string[];
   relations?: EntityRelation[];
+  parentId?: string;
+  hierarchyType?: EntityHierarchyType;
   appliesTo?: Propulsion[];
   inputs?: LocalizedText[];
   outputs?: LocalizedText[];
