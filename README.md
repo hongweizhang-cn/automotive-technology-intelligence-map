@@ -13,7 +13,7 @@ Build an evolvable automotive technology knowledge graph that helps users follow
 ## Key Features
 
 - Interactive React Flow architecture map with a custom vehicle outline, pan/zoom, category layers, search, typed directional relationship labels, selectable relationship-type filters, adjacent-node highlighting, relationship details, and step-by-step system/ECU exploration.
-- Six propulsion reference architectures: ICE, BEV, HEV, PHEV, EREV, and FCEV. Powertrain topology is kept separate from the selectable E/E architecture.
+- Six propulsion reference architectures: ICE, BEV, HEV, PHEV, EREV, and FCEV, with selectable E/E architecture views (Distributed, Domain, Zonal, and Centralized Computing).
 - Technology Explorer with five automotive engineering domains, bilingual search, status-aware technical profiles, typed relationship traversal, source details, architecture-map navigation, favorites, and note-taking.
 - Architecture Comparison for selecting two to four propulsion types or E/E architectures, with grouped/collapsible dimensions and table/card views. It uses recorded systems, ECUs, topology, networks, and optional bilingual comparison profiles; unavailable and inapplicable data are distinct.
 - Industry directory for representative organizations, explicitly labeled as general capability rather than confirmed supplier relationships.
@@ -27,7 +27,7 @@ Build an evolvable automotive technology knowledge graph that helps users follow
 
 ## Supported Vehicle Architectures
 
-Each propulsion type has an illustrative reference topology and a different set of applicable systems and ECUs. E/E architecture is an independent setting with Distributed, Domain, Zonal, and Centralized Computing options.
+Each propulsion type has an illustrative reference topology and a different set of applicable systems and ECUs. The interface allows selecting between Distributed, Domain, Zonal, and Centralized Computing E/E topologies (in the current data model, reference architecture records pair a default E/E type, with complete orthogonal decoupling planned).
 
 | Propulsion | Reference coverage |
 | --- | --- |
@@ -43,7 +43,8 @@ These are generic reference architectures and do not describe the actual configu
 
 - React, TypeScript, Vite
 - Tailwind CSS 4 and project-specific CSS
-- `@xyflow/react` for the interactive architecture graph
+- `@xyflow/react` for interactive architecture graph rendering
+- `elkjs` for layered graph layout (dynamically imported)
 - Lucide React for icons
 - i18next / react-i18next for bilingual UI
 - JSON/TypeScript seed data and browser `localStorage`
@@ -79,7 +80,7 @@ npm run build
 npm test
 ```
 
-The Vitest suite covers reference architecture coverage, relationship integrity and invalid targets, version 1 migration and version 2 JSON round-tripping, localStorage reads/writes, Agent review enforcement, independent review/source-verification states, architecture comparison accuracy, bilingual search filters, data quality checks, and language switching.
+The Vitest suite includes 28 unit tests covering reference architecture coverage, relationship integrity and invalid targets, version 1 migration and version 2 JSON round-tripping, localStorage reads/writes, Agent review enforcement, independent review/source-verification states, architecture comparison accuracy, bilingual search filters, data quality checks, and language switching. (Note: These are model and service unit tests; end-to-end UI automation testing is planned).
 
 ## Data Management
 
