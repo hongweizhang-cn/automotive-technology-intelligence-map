@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Background, Controls, ReactFlow, ReactFlowProvider,
   type Edge, type Node, type NodeProps, Handle, MarkerType, Position,
   useReactFlow,
 } from '@xyflow/react';
-import { BatteryCharging, Cpu, Network, Radio, Settings2, ShieldCheck, Thermometer, Zap } from 'lucide-react';
+import { BatteryCharging, Cpu, Info, Network, Radio, Settings2, ShieldCheck, Thermometer, Zap } from 'lucide-react';
 import type { Architecture, Entity, Language, RelationType } from '../types';
-import { appendExplorationStep, collapseExplorationStep, getDirectRelatedEntityIds, getDirectRelationshipNeighbors, getNodeHighlight, getRelationshipCategory, isRelationVisible } from '../services/graphInteractions';
+import {
+  appendExplorationStep, collapseExplorationStep, getDirectRelatedEntityIds,
+  getDirectRelationshipNeighbors, getExpandableEntityIds, getNodeHighlight,
+  getRelationshipCategory, getSystemCompositionStatus, isInternalToSystem, isRelationVisible,
+} from '../services/graphInteractions';
 
 export type MapViewMode = 'structure' | 'relationship' | 'full';
 
@@ -20,23 +25,149 @@ function MapNode({ data }: NodeProps<Node<{ entity: Entity; language: Language; 
   const Icon = entity.id === 'sys-battery' ? BatteryCharging : entity.id === 'sys-thermal' ? Thermometer : icons[entity.category];
   return (
     <div className={`map-node node-${entity.category}${selected ? ' selected' : ''}${adjacent ? ' adjacent' : ''}${dimmed ? ' dimmed' : ''}${path ? ' explored-path' : ''}`}>
-      <Handle id="target-top" type="target" position={Position.Top} />
-      <Handle id="target-left" type="target" position={Position.Left} />
-      <Handle id="target-right" type="target" position={Position.Right} />
-      <Handle id="target-bottom" type="target" position={Position.Bottom} />
+      {/* Distributed Target handles */}
+      <Handle id="target-top" type="target" position={Position.Top} style={{ left: '50%' }} />
+      <Handle id="target-top-left" type="target" position={Position.Top} style={{ left: '25%' }} />
+      <Handle id="target-top-right" type="target" position={Position.Top} style={{ left: '75%' }} />
+      <Handle id="target-bottom" type="target" position={Position.Bottom} style={{ left: '50%' }} />
+      <Handle id="target-bottom-left" type="target" position={Position.Bottom} style={{ left: '25%' }} />
+      <Handle id="target-bottom-right" type="target" position={Position.Bottom} style={{ left: '75%' }} />
+      <Handle id="target-left" type="target" position={Position.Left} style={{ top: '50%' }} />
+      <Handle id="target-left-top" type="target" position={Position.Left} style={{ top: '25%' }} />
+      <Handle id="target-left-bottom" type="target" position={Position.Left} style={{ top: '75%' }} />
+      <Handle id="target-right" type="target" position={Position.Right} style={{ top: '50%' }} />
+      <Handle id="target-right-top" type="target" position={Position.Right} style={{ top: '25%' }} />
+      <Handle id="target-right-bottom" type="target" position={Position.Right} style={{ top: '75%' }} />
+
       <Icon size={16} />
       <span>{entity.name[language] || entity.name.en}</span>
       <small>{entity.category.toUpperCase()}</small>
-      <Handle id="source-bottom" type="source" position={Position.Bottom} />
-      <Handle id="source-right" type="source" position={Position.Right} />
-      <Handle id="source-left" type="source" position={Position.Left} />
-      <Handle id="source-top" type="source" position={Position.Top} />
+
+      {/* Distributed Source handles */}
+      <Handle id="source-bottom" type="source" position={Position.Bottom} style={{ left: '50%' }} />
+      <Handle id="source-bottom-left" type="source" position={Position.Bottom} style={{ left: '25%' }} />
+      <Handle id="source-bottom-right" type="source" position={Position.Bottom} style={{ left: '75%' }} />
+      <Handle id="source-top" type="source" position={Position.Top} style={{ left: '50%' }} />
+      <Handle id="source-top-left" type="source" position={Position.Top} style={{ left: '25%' }} />
+      <Handle id="source-top-right" type="source" position={Position.Top} style={{ left: '75%' }} />
+      <Handle id="source-right" type="source" position={Position.Right} style={{ top: '50%' }} />
+      <Handle id="source-right-top" type="source" position={Position.Right} style={{ top: '25%' }} />
+      <Handle id="source-right-bottom" type="source" position={Position.Right} style={{ top: '75%' }} />
+      <Handle id="source-left" type="source" position={Position.Left} style={{ top: '50%' }} />
+      <Handle id="source-left-top" type="source" position={Position.Left} style={{ top: '25%' }} />
+      <Handle id="source-left-bottom" type="source" position={Position.Left} style={{ top: '75%' }} />
     </div>
   );
 }
 
-function MapGroup({ data }: NodeProps<Node<{ label: string; language: Language }>>) {
-  return <div className="map-group"><span>{data.label}</span></div>;
+function MapGroup({ data }: NodeProps<Node<{ label: string; count?: number; language: Language; isPartial?: boolean }>>) {
+  return (
+    <div className="map-group">
+      <div className="map-group-header">
+        <span className="map-group-badge">{data.language === 'zh' ? '系统边界' : 'SYSTEM BOUNDARY'}</span>
+        <span className="map-group-title">{data.label}</span>
+        {data.count !== undefined && data.count > 0 && (
+          <span className="map-group-count">{data.count} {data.language === 'zh' ? '个内部组件' : 'components'}</span>
+        )}
+        {data.isPartial && (
+          <span className="map-group-partial-badge">{data.language === 'zh' ? '部分组成' : 'Partial'}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function buildSystemRelationshipLayout(
+  system: Entity,
+  relatedEntities: Entity[],
+): Map<string, LayoutPosition> {
+  const positions = new Map<string, LayoutPosition>();
+  const centerX = 420;
+  const centerY = 190;
+
+  positions.set(system.id, { x: centerX, y: centerY });
+
+  const leftNodes: Entity[] = [];
+  const topNodes: Entity[] = [];
+  const rightNodes: Entity[] = [];
+  const bottomNodes: Entity[] = [];
+
+  for (const ent of relatedEntities) {
+    if (ent.id === system.id) continue;
+    if (ent.category === 'sensor') {
+      leftNodes.push(ent);
+    } else if (ent.category === 'ecu' || ent.category === 'system') {
+      topNodes.push(ent);
+    } else if (ent.category === 'actuator' || ent.category === 'hardware') {
+      rightNodes.push(ent);
+    } else if (['network', 'technology', 'standard'].includes(ent.category)) {
+      bottomNodes.push(ent);
+    } else {
+      leftNodes.push(ent);
+    }
+  }
+
+  // Balance topNodes if it has more than 3 nodes and left or right is empty
+  if (topNodes.length > 3 && leftNodes.length === 0) {
+    const moved = topNodes.splice(0, Math.ceil(topNodes.length / 3));
+    leftNodes.push(...moved);
+  }
+  if (topNodes.length > 3 && rightNodes.length === 0) {
+    const moved = topNodes.splice(Math.floor(topNodes.length / 2));
+    rightNodes.push(...moved);
+  }
+
+  // Position Left Nodes (column x: 100)
+  const leftCount = leftNodes.length;
+  if (leftCount > 0) {
+    const leftStartY = Math.max(50, centerY - ((leftCount - 1) * 115) / 2);
+    leftNodes.forEach((node, idx) => {
+      positions.set(node.id, { x: 100, y: leftStartY + idx * 115 });
+    });
+  }
+
+  // Position Right Nodes (column x: 740)
+  const rightCount = rightNodes.length;
+  if (rightCount > 0) {
+    const rightStartY = Math.max(50, centerY - ((rightCount - 1) * 115) / 2);
+    rightNodes.forEach((node, idx) => {
+      positions.set(node.id, { x: 740, y: rightStartY + idx * 115 });
+    });
+  }
+
+  // Position Top Nodes (row / grid above system)
+  const topCount = topNodes.length;
+  if (topCount > 0) {
+    const cols = topCount <= 3 ? topCount : Math.min(topCount, 3);
+    const colSpacing = 220;
+    const topStartX = centerX - ((cols - 1) * colSpacing) / 2;
+    topNodes.forEach((node, idx) => {
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      positions.set(node.id, {
+        x: topStartX + col * colSpacing,
+        y: row === 0 ? 55 : -55,
+      });
+    });
+  }
+
+  // Position Bottom Nodes (row / grid below system)
+  const bottomCount = bottomNodes.length;
+  if (bottomCount > 0) {
+    const cols = bottomCount <= 3 ? bottomCount : Math.min(bottomCount, 4);
+    const colSpacing = 210;
+    const bottomStartX = centerX - ((cols - 1) * colSpacing) / 2;
+    bottomNodes.forEach((node, idx) => {
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      positions.set(node.id, {
+        x: bottomStartX + col * colSpacing,
+        y: centerY + 145 + row * 105,
+      });
+    });
+  }
+
+  return positions;
 }
 
 const nodeTypes = { entity: MapNode, group: MapGroup };
@@ -127,6 +258,37 @@ export function getEdgeRoutingDecision(source: LayoutPosition, target: LayoutPos
   };
 }
 
+export function allocateDistributedHandles(
+  source: LayoutPosition,
+  target: LayoutPosition,
+  pairIndex: number,
+): { sourceHandle: string; targetHandle: string } {
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    if (dx >= 0) {
+      const sourceHandle = dy > 30 ? 'source-right-bottom' : dy < -30 ? 'source-right-top' : pairIndex % 2 === 1 ? 'source-right-bottom' : 'source-right';
+      const targetHandle = dy > 30 ? 'target-left-top' : dy < -30 ? 'target-left-bottom' : pairIndex % 2 === 1 ? 'target-left-top' : 'target-left';
+      return { sourceHandle, targetHandle };
+    } else {
+      const sourceHandle = dy > 30 ? 'source-left-bottom' : dy < -30 ? 'source-left-top' : pairIndex % 2 === 1 ? 'source-left-bottom' : 'source-left';
+      const targetHandle = dy > 30 ? 'target-right-top' : dy < -30 ? 'target-right-bottom' : pairIndex % 2 === 1 ? 'target-right-top' : 'target-right';
+      return { sourceHandle, targetHandle };
+    }
+  } else {
+    if (dy >= 0) {
+      const sourceHandle = dx > 30 ? 'source-bottom-right' : dx < -30 ? 'source-bottom-left' : pairIndex % 2 === 1 ? 'source-bottom-right' : 'source-bottom';
+      const targetHandle = dx > 30 ? 'target-top-left' : dx < -30 ? 'target-top-right' : pairIndex % 2 === 1 ? 'target-top-left' : 'target-top';
+      return { sourceHandle, targetHandle };
+    } else {
+      const sourceHandle = dx > 30 ? 'source-top-right' : dx < -30 ? 'source-top-left' : pairIndex % 2 === 1 ? 'source-top-right' : 'source-top';
+      const targetHandle = dx > 30 ? 'target-bottom-left' : dx < -30 ? 'target-bottom-right' : pairIndex % 2 === 1 ? 'target-bottom-left' : 'target-bottom';
+      return { sourceHandle, targetHandle };
+    }
+  }
+}
+
 interface Props {
   architecture: Architecture;
   entities: Entity[];
@@ -151,192 +313,319 @@ function VehicleMapCanvas({
   visibleCategories, visibleRelationTypes, onSelect, onSystem, onEcu, onEdge,
   selectedRelationKey, search, resetSignal,
 }: Props) {
+  const { t } = useTranslation();
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [elkPositions, setElkPositions] = useState<Record<string, LayoutPosition>>({});
   const { fitView } = useReactFlow();
+
   useEffect(() => setExpandedIds([]), [architecture.id, architecture.eeArchitecture, selectedSystem, selectedEcu, resetSignal]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void fitView({ padding: 0.16, maxZoom: 1, duration: 220 });
     }, 120);
     return () => window.clearTimeout(timer);
   }, [architecture.id, architecture.eeArchitecture, selectedSystem, selectedEcu, resetSignal, fitView]);
+
   const entityById = useMemo(() => new Map(entities.map((entity) => [entity.id, entity])), [entities]);
   const system = selectedSystem ? entityById.get(selectedSystem) : undefined;
   const ecu = selectedEcu ? entityById.get(selectedEcu) : undefined;
+
   const graph = useMemo(() => {
-    let candidates: Entity[];
-    let relationshipRoot: string | null = null;
-    if (ecu) {
-      const reverseRelatedIds = entities.filter((entity) => entity.relatesTo.includes(ecu.id) || entity.relations?.some((relation) => relation.targetId === ecu.id)).map((entity) => entity.id);
-      candidates = [
-        ecu,
-        ...[...new Set([...ecu.relatesTo, ...reverseRelatedIds])].map((id) => entityById.get(id)).filter((item): item is Entity => Boolean(item))
-          .filter((item) => item.category !== 'system' || architecture.systemIds.includes(item.id))
-          .filter((item) => item.category !== 'ecu' || architecture.ecuIds.includes(item.id)),
-      ];
-      relationshipRoot = ecu.id;
-    } else if (system) {
-      const relatedIds = new Set([
+    const positions = new Map<string, LayoutPosition>();
+    const nodes: Node<any>[] = [];
+    const expandedEntities = new Map<string, Entity>();
+
+    // 1. Gather Candidate Entities
+    let displayEntities: Entity[] = [];
+    let internalEntities: Entity[] = [];
+    let externalEntities: Entity[] = [];
+    let shouldRenderContainer = false;
+
+    if (system) {
+      // SYSTEM CONTAINER FOCUSED VIEW:
+      // If internal components exist, the system is rendered as a container.
+      // If no internal components exist, the system is rendered as a focal entity card.
+      const allRelatedIds = new Set([
         ...system.relatesTo,
-        ...(system.relations ?? []).map((relation) => relation.targetId),
-        ...entities.filter((entity) => entity.relatesTo.includes(system.id) || entity.relations?.some((relation) => relation.targetId === system.id)).map((entity) => entity.id),
+        ...(system.relations ?? []).map((r) => r.targetId),
+        ...entities.filter((e) => e.relatesTo.includes(system.id) || e.relations?.some((r) => r.targetId === system.id)).map((e) => e.id),
       ]);
-      candidates = [system, ...[...relatedIds].map((id) => entityById.get(id)).filter((item): item is Entity => Boolean(item))
+
+      const relevantEntities = [...allRelatedIds]
+        .map((id) => entityById.get(id))
+        .filter((item): item is Entity => Boolean(item))
         .filter((item) => item.category !== 'system' || architecture.systemIds.includes(item.id))
-        .filter((item) => item.category !== 'ecu' || architecture.ecuIds.includes(item.id))];
-      relationshipRoot = system.id;
+        .filter((item) => item.category !== 'ecu' || architecture.ecuIds.includes(item.id));
+
+      for (const ent of relevantEntities) {
+        if (ent.id === system.id) continue;
+        if (isInternalToSystem(ent, system.id, entities)) {
+          internalEntities.push(ent);
+        } else {
+          externalEntities.push(ent);
+        }
+      }
+
+      // Ensure any entity with parentId matching this system is captured as internal
+      for (const ent of entities) {
+        if (ent.id === system.id) continue;
+        if (ent.parentId === system.id && !internalEntities.some((e) => e.id === ent.id)) {
+          if (ent.category !== 'ecu' || architecture.ecuIds.includes(ent.id)) {
+            internalEntities.push(ent);
+          }
+        }
+      }
+
+      // Expand exploration: prioritize internal children/components of expanded nodes
+      for (const expId of expandedIds) {
+        for (const id of getExpandableEntityIds(expId, entities)) {
+          const linked = entityById.get(id);
+          if (linked && linked.id !== system.id) {
+            if (isInternalToSystem(linked, system.id, entities)) {
+              if (!internalEntities.some((e) => e.id === linked.id)) {
+                internalEntities.push(linked);
+                expandedEntities.set(linked.id, linked);
+              }
+            } else if (!externalEntities.some((e) => e.id === linked.id)) {
+              externalEntities.push(linked);
+              expandedEntities.set(linked.id, linked);
+            }
+          }
+        }
+      }
+
+      // Filter by visibleCategories
+      internalEntities = internalEntities.filter((e) => visibleCategories.includes(e.category));
+      externalEntities = externalEntities.filter((e) => visibleCategories.includes(e.category));
+
+      const intCount = internalEntities.length;
+      shouldRenderContainer = intCount > 0;
+      const compositionStatus = getSystemCompositionStatus(system.id, internalEntities, externalEntities);
+
+      if (shouldRenderContainer) {
+        // Category sort for internal components: controllers first, then hardware, sensors, actuators
+        const catOrder: Record<string, number> = { ecu: 0, hardware: 1, sensor: 2, actuator: 3, system: 4, network: 5, technology: 6, standard: 7, company: 8 };
+        internalEntities.sort((a, b) => (catOrder[a.category] ?? 9) - (catOrder[b.category] ?? 9) || a.id.localeCompare(b.id));
+
+        // 2. Compute Container & Internal Node Positions
+        const cols = intCount <= 2 ? Math.max(intCount, 1) : intCount <= 6 ? 2 : 3;
+        const rows = Math.ceil(Math.max(intCount, 1) / cols);
+        const nodeW = 182;
+        const nodeH = 62;
+        const colGap = 32;
+        const rowGap = 22;
+        const padLeft = 28;
+        const padRight = 28;
+        const padTop = 58;
+        const padBottom = 26;
+
+        const containerW = padLeft + cols * nodeW + (cols - 1) * colGap + padRight;
+        const containerH = padTop + rows * nodeH + (rows - 1) * rowGap + padBottom;
+
+        // Classify external entities into left (inputs/upstream), right (loads/downstream), bottom (networks)
+        const leftExternals: Entity[] = [];
+        const rightExternals: Entity[] = [];
+        const bottomExternals: Entity[] = [];
+
+        for (const ext of externalEntities) {
+          if (ext.category === 'network') {
+            bottomExternals.push(ext);
+          } else if (ext.category === 'hardware' || ext.category === 'actuator' || ext.id === 'hw-pdu') {
+            rightExternals.push(ext);
+          } else {
+            leftExternals.push(ext);
+          }
+        }
+
+        const containerX = leftExternals.length > 0 ? 330 : 100;
+        const containerY = 60;
+
+        // Position container node (group)
+        nodes.push({
+          id: `group:${system.id}`,
+          type: 'group',
+          position: { x: containerX, y: containerY },
+          style: { width: containerW, height: containerH },
+          zIndex: -1,
+          data: {
+            label: system.name[language] || system.name.en,
+            count: intCount,
+            language,
+            isPartial: compositionStatus === 'partial',
+          },
+        });
+
+        // Position internal nodes inside container
+        internalEntities.forEach((entity, idx) => {
+          const c = idx % cols;
+          const r = Math.floor(idx / cols);
+          const x = containerX + padLeft + c * (nodeW + colGap);
+          const y = containerY + padTop + r * (nodeH + rowGap);
+          positions.set(entity.id, { x, y });
+        });
+
+        // Position external left nodes (upstream / inputs)
+        leftExternals.forEach((entity, idx) => {
+          positions.set(entity.id, { x: 70, y: containerY + 20 + idx * 105 });
+        });
+
+        // Position external right nodes (downstream / outputs)
+        rightExternals.forEach((entity, idx) => {
+          positions.set(entity.id, { x: containerX + containerW + 90, y: containerY + 20 + idx * 105 });
+        });
+
+        // Position external bottom nodes (networks)
+        bottomExternals.forEach((entity, idx) => {
+          const netStartX = containerX + Math.max(0, (containerW - bottomExternals.length * 210) / 2);
+          positions.set(entity.id, { x: netStartX + idx * 210, y: containerY + containerH + 50 });
+        });
+
+        displayEntities = [...internalEntities, ...externalEntities];
+      } else {
+        // NO INTERNAL CONTAINER: Degrade to clean relationship graph with system as focal node!
+        // Under NO circumstances should an empty container appear.
+        displayEntities = [system, ...externalEntities];
+        const fallbackPositions = buildSystemRelationshipLayout(system, externalEntities);
+        fallbackPositions.forEach((pos, id) => {
+          positions.set(id, pos);
+        });
+      }
     } else {
-      candidates = getOverviewSystemIds(architecture, entities)
+      // TOP-LEVEL OVERVIEW VIEW:
+      // Show system overview cards in a balanced layout.
+      displayEntities = getOverviewSystemIds(architecture, entities)
         .map((id) => entityById.get(id))
         .filter((item): item is Entity => Boolean(item));
-    }
 
-    const baseIds = new Set(candidates.map((entity) => entity.id));
-    const expandedEntities = new Map<string, Entity>();
-    for (const expandedId of expandedIds) {
-      for (const id of getDirectRelatedEntityIds(expandedId, entities)) {
-        const linked = entityById.get(id);
-        if (linked && !baseIds.has(id)) expandedEntities.set(id, linked);
+      // Expand exploration in overview
+      for (const expId of expandedIds) {
+        for (const id of getDirectRelatedEntityIds(expId, entities)) {
+          const linked = entityById.get(id);
+          if (linked && !displayEntities.some((e) => e.id === linked.id)) {
+            displayEntities.push(linked);
+            expandedEntities.set(linked.id, linked);
+          }
+        }
       }
-    }
-    candidates = [...candidates, ...expandedEntities.values()];
-    const filtered = candidates.filter((entity) => visibleCategories.includes(entity.category));
-    const query = search.trim().toLocaleLowerCase();
-    const results = query ? filtered.filter((entity) => `${entity.name.en} ${entity.name.zh} ${entity.description.en}`.toLocaleLowerCase().includes(query)) : filtered;
-    const systems = results.filter((entity) => entity.category === 'system');
-    const ecus = results.filter((entity) => entity.category === 'ecu');
-    const selectedNeighbors = new Set(selectedId ? getDirectRelationshipNeighbors(selectedId, entities, visibleRelationTypes) : []);
-    const detailedPositions = relationshipRoot
-      ? buildDetailedLayoutPositions(results, relationshipRoot, baseIds, expandedEntities)
-      : null;
-    const nodes: Node<any>[] = results.map((entity, index) => {
-      let x = 70 + (index % 4) * 205;
-      let y = 55 + Math.floor(index / 4) * 112;
-      if (detailedPositions?.has(entity.id)) {
-        const position = detailedPositions.get(entity.id)!;
-        x = position.x;
-        y = position.y;
-      } else if (!selectedSystem && !selectedEcu) {
+
+      displayEntities = displayEntities.filter((e) => visibleCategories.includes(e.category));
+
+      displayEntities.forEach((entity, index) => {
         const columns = 4;
-        x = 95 + (index % columns) * 205;
-        y = 95 + Math.floor(index / columns) * 145;
-      } else if (architecture.eeArchitecture === 'Distributed' && entity.category === 'ecu') {
-        const ecuIndex = ecus.findIndex((item) => item.id === entity.id);
-        const parentIndex = systems.findIndex((item) => entity.relatesTo.includes(item.id) || item.relatesTo.includes(entity.id));
-        x = parentIndex < 0 ? 80 + (ecuIndex % 4) * 205 : 80 + (parentIndex % 4) * 205;
-        y = 400 + Math.floor(ecuIndex / 4) * 112;
-      } else if (architecture.eeArchitecture === 'Domain' && entity.id.endsWith('-domain')) {
-        const domainIndex = ['ecu-powertrain-domain', 'ecu-body-domain', 'ecu-adas-domain', 'ecu-cockpit-domain'].indexOf(entity.id);
-        x = 70 + Math.max(domainIndex, 0) * 205;
-        y = 390;
-      } else if (architecture.eeArchitecture === 'Domain' && entity.category === 'ecu') {
-        const linkedSystemIds = new Set([...entity.relatesTo, ...(entity.relations ?? []).map((relation) => relation.targetId)]);
-        const domainGroups = [
-          ['sys-powertrain', 'sys-engine', 'sys-battery', 'sys-hybrid-control', 'sys-electric-drive', 'sys-fuel-cell'],
-          ['sys-body', 'sys-chassis'],
-          ['sys-adas'],
-          ['sys-ivi'],
-        ];
-        const domainIndex = domainGroups.findIndex((group) => group.some((systemId) => linkedSystemIds.has(systemId)));
-        const groupIndex = domainIndex < 0 ? 4 : domainIndex;
-        const groupMembers = ecus.filter((item) => {
-          const itemLinks = new Set([...item.relatesTo, ...(item.relations ?? []).map((relation) => relation.targetId)]);
-          return domainGroups[groupIndex]?.some((systemId) => itemLinks.has(systemId)) ?? !domainGroups.some((group) => group.some((systemId) => itemLinks.has(systemId)));
-        });
-        const memberIndex = groupMembers.findIndex((item) => item.id === entity.id);
-        x = 70 + groupIndex * 205;
-        y = 510 + Math.max(0, memberIndex) * 112;
-      } else if (architecture.eeArchitecture === 'Zonal') {
-        if (entity.id === 'ecu-zonal-front') { x = 35; y = 80; }
-        else if (entity.id === 'ecu-zonal-rear') { x = 35; y = 270; }
-        else if (entity.id === 'ecu-zonal') { x = 35; y = 175; }
-        else if (entity.category === 'ecu') { const ecuIndex = ecus.findIndex((item) => item.id === entity.id); x = 300 + (ecuIndex % 4) * 205; y = 400 + Math.floor(ecuIndex / 4) * 112; }
-      } else if (architecture.eeArchitecture === 'Centralized') {
-        if (entity.id === 'ecu-central-compute') { x = 480; y = 25; }
-        else if (entity.category === 'ecu') { const ecuIndex = ecus.findIndex((item) => item.id === entity.id); x = 70 + (ecuIndex % 4) * 205; y = 400 + Math.floor(ecuIndex / 4) * 112; }
-        else if (entity.category === 'system') { const systemIndex = systems.findIndex((item) => item.id === entity.id); x = 70 + (systemIndex % 4) * 205; y = 190 + Math.floor(systemIndex / 4) * 112; }
-      }
-      return {
-        id: entity.id, type: 'entity', position: elkPositions[entity.id] ?? { x, y },
-        data: { entity, language, ...getNodeHighlight(entity.id, selectedId, selectedNeighbors, expandedIds) },
-      };
-    });
-    if (viewMode === 'structure' && relationshipRoot && system) {
-      nodes.unshift({
-        id: `group:${system.id}`,
-        type: 'group',
-        position: { x: 260, y: 30 },
-        zIndex: -1,
-        style: { width: 1120, height: 760 },
-        data: { label: system.name[language] || system.name.en, language },
+        const x = 95 + (index % columns) * 220;
+        const y = 90 + Math.floor(index / columns) * 145;
+        positions.set(entity.id, elkPositions[entity.id] ?? { x, y });
       });
     }
-    const resultIds = new Set(results.map((entity) => entity.id));
-    const nodePositionById = new Map(nodes.map((node) => [node.id, node.position]));
-    const pairEdgeCount = new Map<string, number>();
+
+    // Apply Search Filter
+    const query = search.trim().toLocaleLowerCase();
+    const filteredResults = query
+      ? displayEntities.filter((entity) => `${entity.name.en} ${entity.name.zh} ${entity.description.en}`.toLocaleLowerCase().includes(query))
+      : displayEntities;
+
+    const resultIds = new Set(filteredResults.map((e) => e.id));
+    const selectedNeighbors = new Set(selectedId ? getDirectRelationshipNeighbors(selectedId, entities, visibleRelationTypes) : []);
+
+    // Create React Flow Entity Nodes
+    for (const entity of filteredResults) {
+      const pos = positions.get(entity.id) ?? { x: 100, y: 100 };
+      nodes.push({
+        id: entity.id,
+        type: 'entity',
+        position: pos,
+        data: {
+          entity,
+          language,
+          ...getNodeHighlight(entity.id, selectedId, selectedNeighbors, expandedIds),
+        },
+      });
+    }
+
+    // 3. Edge Generation & Filtering
     const edges: Edge[] = [];
+    const pairEdgeCount = new Map<string, number>();
+    const seenEdges = new Set<string>();
+
     const relationLabels: Record<string, [string, string]> = {
       contains: ['包含', 'contains'], part_of: ['属于', 'part of'], controls: ['控制', 'controls'], monitors: ['监测', 'monitors'],
-      communicates_with: ['通信', 'communicates'], connected_to: ['连接', 'connected'], powered_by: ['由其供电', 'powered by'],
-      distributes_power_to: ['配电', 'distributes power'], depends_on: ['依赖', 'depends on'], implements: ['实现', 'implements'],
+      communicates_with: ['通信', 'communicates'], connected_to: ['总线连接', 'connected'], powered_by: ['由其供电', 'powered by'],
+      distributes_power_to: ['配电', 'power flow'], depends_on: ['依赖', 'depends on'], implements: ['实现', 'implements'],
       uses: ['使用', 'uses'], integrates: ['集成', 'integrates'], transports: ['承载', 'transports'], defines: ['定义', 'defines'],
     };
-    const seenEdges = new Set<string>();
-    for (const source of results) {
+
+    for (const source of filteredResults) {
       const explicitTargets = new Set((source.relations ?? []).map((relation) => relation.targetId));
       const links = [
-        ...(source.relations ?? []).filter((relation) => resultIds.has(relation.targetId)).map((relation) => ({ targetId: relation.targetId, type: relation.type, description: relation.description })),
+        ...(source.relations ?? []).filter((r) => resultIds.has(r.targetId)).map((r) => ({ targetId: r.targetId, type: r.type, description: r.description })),
         ...source.relatesTo.filter((targetId) => resultIds.has(targetId) && !explicitTargets.has(targetId)).map((targetId) => ({
           targetId, type: 'related_to' as const,
-          description: { zh: '旧版关联未记录关系语义。', en: 'Legacy link; relationship semantics were not recorded.' },
+          description: { zh: '关联链接', en: 'Related link' },
         })),
       ];
+
       for (const link of links) {
         const edgeId = `link:${source.id}:${link.targetId}:${link.type}`;
         if (seenEdges.has(edgeId)) continue;
         seenEdges.add(edgeId);
+
         if (!isRelationVisible(link.type, visibleRelationTypes)) continue;
-        if (viewMode === 'structure' && ['contains', 'part_of'].includes(link.type)) continue;
-        if (viewMode === 'relationship' && ![
-          'communicates_with', 'controls', 'monitors', 'depends_on',
-          'powered_by', 'distributes_power_to', 'connected_to', 'uses',
-        ].includes(link.type)) continue;
+
+        // View Mode Filtering:
+        // Structure view: hide internal contains/part_of (expressed by container)
+        if (viewMode === 'structure') {
+          if (['contains', 'part_of'].includes(link.type)) continue;
+          // In structure view with container, suppress low-level non-structural chatter
+          if (shouldRenderContainer && !['integrates', 'controls', 'distributes_power_to', 'connected_to'].includes(link.type)) continue;
+        }
+
+        // Relationship view: hide structural containment, focus on communication, control, power, dependency
+        if (viewMode === 'relationship') {
+          const allowedRelTypes = ['communicates_with', 'controls', 'monitors', 'depends_on', 'powered_by', 'distributes_power_to', 'connected_to', 'uses', 'transports'];
+          if (!allowedRelTypes.includes(link.type)) {
+            if (!shouldRenderContainer && link.type === 'related_to' && (source.id === system?.id || link.targetId === system?.id)) {
+              // keep related_to directly connecting to focal system when no container is available
+            } else {
+              continue;
+            }
+          }
+        }
+
+        // In overview without selection, skip generic related_to
         if (!selectedSystem && !selectedEcu && link.type === 'related_to') continue;
-        if (!selectedSystem && !selectedEcu && ![
-          'contains', 'part_of', 'controls', 'monitors', 'communicates_with',
-          'connected_to', 'powered_by', 'distributes_power_to', 'integrates', 'transports',
-        ].includes(link.type)) continue;
-        const label = relationLabels[link.type]?.[language === 'zh' ? 0 : 1]
-          ?? (link.type === 'related_to' ? undefined : link.type);
+
+        const sourcePos = positions.get(source.id);
+        const targetPos = positions.get(link.targetId);
+        if (!sourcePos || !targetPos) continue;
+
+        const pairKey = [source.id, link.targetId].sort().join(':');
+        const pairIndex = pairEdgeCount.get(pairKey) ?? 0;
+        pairEdgeCount.set(pairKey, pairIndex + 1);
+
+        const { sourceHandle, targetHandle } = allocateDistributedHandles(sourcePos, targetPos, pairIndex);
+
         const highlighted = selectedId === source.id || selectedId === link.targetId;
         const selectedEdge = selectedRelationKey === edgeId;
         const pathEdge = expandedIds.includes(source.id) && expandedIds.includes(link.targetId);
         const relationshipCategory = getRelationshipCategory(link.type);
-        const sourcePosition = nodePositionById.get(source.id);
-        const targetPosition = nodePositionById.get(link.targetId);
-        const pairKey = [source.id, link.targetId].sort().join(':');
-        const pairIndex = pairEdgeCount.get(pairKey) ?? 0;
-        pairEdgeCount.set(pairKey, pairIndex + 1);
-        const routing = getEdgeRoutingDecision(
-          sourcePosition ?? { x: 0, y: 0 },
-          targetPosition ?? { x: 0, y: 0 },
-        );
-        let sourceHandle = routing.sourceHandle;
-        let targetHandle = routing.targetHandle;
-        const dy = (targetPosition?.y ?? 0) - (sourcePosition?.y ?? 0);
-        if (pairIndex % 2 === 1) {
-          sourceHandle = dy >= 0 ? 'source-right' : 'source-left';
-          targetHandle = dy >= 0 ? 'target-left' : 'target-right';
-        }
+
+        const label = relationLabels[link.type]?.[language === 'zh' ? 0 : 1] ?? (link.type === 'related_to' ? undefined : link.type);
+
         edges.push({
-          id: edgeId, source: source.id, target: link.targetId, type: routing.type,
+          id: edgeId,
+          source: source.id,
+          target: link.targetId,
+          type: 'smoothstep',
           sourceHandle,
           targetHandle,
           data: { sourceId: source.id, targetId: link.targetId, relationType: link.type, description: link.description },
-          label: hoveredEdgeId === edgeId ? label : undefined,
-          markerEnd: { type: MarkerType.ArrowClosed, color: selectedEdge ? '#ffe08a' : highlighted ? '#77e5d7' : '#547083' },
+          label: (hoveredEdgeId === edgeId || selectedEdge || (viewMode === 'relationship' && highlighted)) ? label : undefined,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: selectedEdge ? '#ffe08a' : highlighted ? '#77e5d7' : relationshipCategory === 'power_flow' ? '#d8b45e' : relationshipCategory === 'control' ? '#77a5df' : relationshipCategory === 'communication' ? '#62b8d6' : '#547083',
+          },
           style: {
             stroke: selectedEdge ? '#ffe08a' : highlighted ? '#77e5d7'
               : relationshipCategory === 'communication' ? '#62b8d6'
@@ -346,7 +635,7 @@ function VehicleMapCanvas({
                       : relationshipCategory === 'network' ? '#55c3ad'
                         : pathEdge ? '#52c8ba' : '#365b70',
             strokeWidth: selectedEdge ? 3 : highlighted ? 2.5 : 1.5,
-            opacity: selectedId && !highlighted && !pathEdge ? 0.13 : 0.82,
+            opacity: selectedId && !highlighted && !pathEdge ? 0.08 : 0.85,
             ...(source.category === 'network' || link.type === 'communicates_with'
               ? { strokeDasharray: '5 4' }
               : link.type === 'depends_on'
@@ -358,13 +647,22 @@ function VehicleMapCanvas({
         });
       }
     }
+
     return { nodes, edges, expandedEntities };
-  }, [architecture, entityById, entities, language, viewMode, selectedId, selectedSystem, selectedEcu, system, ecu, visibleCategories, visibleRelationTypes, search, expandedIds, selectedRelationKey, hoveredEdgeId, elkPositions]);
+  }, [
+    architecture, entityById, entities, language, viewMode, selectedId, selectedSystem, selectedEcu,
+    system, ecu, visibleCategories, visibleRelationTypes, search, expandedIds, selectedRelationKey,
+    hoveredEdgeId, elkPositions,
+  ]);
+
+  // ELK Layout for Overview Mode only (when not in a focused system)
   useEffect(() => {
+    if (selectedSystem) return; // Dedicated container engine handles system layout deterministically
     let cancelled = false;
     const structuralNodes = graph.nodes.filter((node) => node.type === 'entity');
     if (!structuralNodes.length) return;
     const structuralNodeIds = new Set(structuralNodes.map((node) => node.id));
+
     const layout = {
       id: 'root',
       layoutOptions: {
@@ -376,19 +674,12 @@ function VehicleMapCanvas({
         'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
         'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
       },
-      children: structuralNodes.map((node) => ({
-        id: node.id,
-        width: 182,
-        height: 62,
-      })),
+      children: structuralNodes.map((node) => ({ id: node.id, width: 182, height: 62 })),
       edges: graph.edges
         .filter((edge) => structuralNodeIds.has(edge.source) && structuralNodeIds.has(edge.target))
-        .map((edge) => ({
-          id: edge.id,
-          sources: [edge.source],
-          targets: [edge.target],
-        })),
+        .map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] })),
     };
+
     void import('elkjs/lib/elk.bundled.js').then(({ default: ELK }) => {
       const elk = new ELK();
       return elk.layout(layout);
@@ -400,36 +691,60 @@ function VehicleMapCanvas({
     }).catch(() => {
       if (!cancelled) setElkPositions({});
     });
+
     return () => { cancelled = true; };
-  }, [architecture.id, architecture.eeArchitecture, viewMode, selectedSystem, selectedEcu, expandedIds.join('|'), resetSignal]);
+  }, [architecture.id, architecture.eeArchitecture, viewMode, selectedSystem, resetSignal]);
 
   const expandSelected = () => {
     if (!selectedId || expandedIds.includes(selectedId)) return;
     setExpandedIds((current) => appendExplorationStep(current, selectedId));
   };
-  const selectedDirectCount = selectedId ? getDirectRelatedEntityIds(selectedId, entities).length : 0;
+  const selectedDirectCount = selectedId ? getExpandableEntityIds(selectedId, entities).length : 0;
 
   const onNodeClick = (_: React.MouseEvent, node: Node) => {
     const entity = entityById.get(node.id);
     if (!entity) return;
+
     onSelect(entity.id);
+
+    // If clicking a system node in top-level overview, enter that system
     if (entity.category === 'system') {
-      onSystem(entity.id);
-      onEcu(null);
-    } else if (entity.category === 'ecu' && selectedSystem) {
-      onEcu(entity.id);
-    } else if (entity.category === 'ecu') {
-      const parent = entity.relatesTo.find((id) => architecture.systemIds.includes(id))
-        ?? entity.relations?.map((relation) => relation.targetId).find((id) => architecture.systemIds.includes(id));
-      if (parent) onSystem(parent);
-      onEcu(entity.id);
-    } else if (entity.category === 'network' && !selectedSystem) {
-      onSelect(entity.id);
+      if (entity.id !== selectedSystem) {
+        onSystem(entity.id);
+        onEcu(null);
+      }
     }
+    // Note: When inside a system, clicking an ECU, sensor, or actuator selects/focuses it without destroying the container.
   };
+
+  const systemNotice = useMemo(() => {
+    if (!system) return null;
+    const internal = entities.filter((e) => isInternalToSystem(e, system.id, entities));
+    const allRelatedIds = new Set([
+      ...system.relatesTo,
+      ...(system.relations ?? []).map((r) => r.targetId),
+      ...entities.filter((e) => e.relatesTo.includes(system.id) || e.relations?.some((r) => r.targetId === system.id)).map((e) => e.id),
+    ]);
+    const external = [...allRelatedIds]
+      .filter((id) => id !== system.id && !internal.some((e) => e.id === id))
+      .map((id) => entityById.get(id))
+      .filter((item): item is Entity => Boolean(item));
+
+    const status = getSystemCompositionStatus(system.id, internal, external);
+    if (status === 'empty') return t('noArchitectureData');
+    if (status === 'none') return t('compositionUndefined');
+    if (status === 'partial') return t('compositionPartial');
+    return null;
+  }, [system, entities, entityById, t]);
 
   return (
     <div className="map-canvas" data-edge-count={graph.edges.length} data-node-count={graph.nodes.length}>
+      {systemNotice && (
+        <div className="map-system-notice" role="status">
+          <Info size={13} />
+          <span>{systemNotice}</span>
+        </div>
+      )}
       <svg className="car-outline" viewBox="0 0 760 410" aria-hidden="true">
         <path d="M259 24 Q380 -2 501 24 L556 68 Q586 100 596 149 L624 188 L624 318 Q620 350 590 360 L170 360 Q140 350 136 318 L136 188 L164 149 Q174 100 204 68 Z" />
         <path d="M246 48 Q380 28 514 48 L545 83 L565 145 L195 145 L215 83 Z" />
@@ -439,7 +754,7 @@ function VehicleMapCanvas({
         <circle cx="185" cy="322" r="13" /><circle cx="575" cy="322" r="13" />
       </svg>
       <ReactFlow
-        key={`${architecture.id}:${architecture.eeArchitecture}:${selectedSystem ?? ''}:${selectedEcu ?? ''}:${resetSignal}`}
+        key={`${architecture.id}:${architecture.eeArchitecture}:${selectedSystem ?? 'overview'}:${resetSignal}`}
         nodes={graph.nodes}
         edges={graph.edges}
         nodeTypes={nodeTypes}
@@ -467,12 +782,12 @@ function VehicleMapCanvas({
           {language === 'zh' ? '清除焦点' : 'Clear Focus'}
         </button>
         <button className="button-secondary" disabled={!selectedDirectCount || expandedIds.includes(selectedId)} onClick={expandSelected}>
-          {language === 'zh' ? `展开一层关联 (${selectedDirectCount})` : `Expand one level (${selectedDirectCount})`}
+          {language === 'zh' ? `展开一层组成/关联 (${selectedDirectCount})` : `Expand one level (${selectedDirectCount})`}
         </button>
         <button className="button-secondary" disabled={!expandedIds.length} onClick={() => setExpandedIds(collapseExplorationStep)}>
           {language === 'zh' ? '收起一层' : 'Collapse one level'}
         </button>
-        <span>{expandedIds.length ? language === 'zh' ? `探索路径 ${expandedIds.map((id) => entityById.get(id)?.name[language] ?? id).join(' → ')}` : `Exploration path: ${expandedIds.join(' → ')}` : language === 'zh' ? '逐层展开，不自动扩展' : 'Expand manually, one level at a time'}</span>
+        <span>{expandedIds.length ? language === 'zh' ? `探索路径: ${expandedIds.map((id) => entityById.get(id)?.name[language] ?? id).join(' → ')}` : `Exploration path: ${expandedIds.join(' → ')}` : language === 'zh' ? '逐层展开，内部组成优先' : 'Expand manually, composition first'}</span>
       </div>}
     </div>
   );

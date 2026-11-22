@@ -52,6 +52,51 @@ export function getRelationshipCategory(type: RelationType): RelationshipCategor
   return 'unclassified';
 }
 
+export function isInternalToSystem(entity: Entity, systemId: string, entities: Entity[]): boolean {
+  if (entity.id === systemId) return false;
+  if (entity.parentId === systemId) return true;
+  const system = entities.find((item) => item.id === systemId);
+  if (system?.relations?.some((r) => (r.type === 'contains' || r.type === 'integrates') && r.targetId === entity.id)) return true;
+  if (entity.relations?.some((r) => r.type === 'part_of' && r.targetId === systemId)) return true;
+  if (entity.parentId) {
+    const parent = entities.find((item) => item.id === entity.parentId);
+    if (parent && isInternalToSystem(parent, systemId, entities)) return true;
+  }
+  return false;
+}
+
+export type CompositionStatus = 'full' | 'partial' | 'none' | 'empty';
+
+export function getSystemCompositionStatus(
+  _systemId: string,
+  internalEntities: Entity[],
+  externalEntities: Entity[],
+): CompositionStatus {
+  if (internalEntities.length === 0) {
+    return externalEntities.length === 0 ? 'empty' : 'none';
+  }
+  if (internalEntities.length < 4) {
+    return 'partial';
+  }
+  return 'full';
+}
+
+export function getExpandableEntityIds(entityId: string, entities: Entity[]): string[] {
+  const entity = entities.find((item) => item.id === entityId);
+  if (!entity) return [];
+  const children = entities
+    .filter((item) => item.parentId === entityId || entity.relations?.some((r) => (r.type === 'contains' || r.type === 'integrates') && r.targetId === item.id))
+    .map((item) => item.id);
+  if (children.length > 0) return children;
+
+  const directOutputs = (entity.relations ?? [])
+    .filter((r) => ['uses', 'monitors', 'controls', 'communicates_with'].includes(r.type))
+    .map((r) => r.targetId);
+  if (directOutputs.length > 0) return directOutputs;
+
+  return getDirectRelatedEntityIds(entityId, entities);
+}
+
 export function getDirectRelationshipNeighbors(entityId: string, entities: Entity[], visibleTypes: RelationType[]): Set<string> {
   const neighbors = new Set<string>();
   for (const entity of entities) {

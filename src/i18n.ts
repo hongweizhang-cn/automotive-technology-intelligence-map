@@ -34,6 +34,11 @@ const resources = {
     layers: 'Visible node categories', poweredBy: 'Built for engineering exploration', clearSearch: 'Clear search',
     emptyNotes: 'Choose a saved entity to add a personal note.', noneSaved: 'No favorites yet. Save a technology or architecture node.',
     version: 'MVP · Reference data', sourceUrl: 'Source URL', createdAt: 'Last updated',
+    compositionUndefined: 'System composition has not been defined yet. Showing available relationships.',
+    compositionPartial: 'Partial system composition — only confirmed components are shown.',
+    noArchitectureData: 'No architecture data is currently available for this system.',
+    systemBoundary: 'System boundary',
+    partialCompositionBadge: 'Partial composition',
   } },
   zh: { translation: {
     tagline: '汽车技术全景地图与行业情报平台',
@@ -66,6 +71,11 @@ const resources = {
     layers: '显示的节点类别', poweredBy: '面向工程技术探索', clearSearch: '清除搜索',
     emptyNotes: '选择已收藏实体添加个人笔记。', noneSaved: '暂无收藏，可从技术或架构节点添加。',
     version: 'MVP · 参考数据', sourceUrl: '来源 URL', createdAt: '最后更新',
+    compositionUndefined: '该系统尚未定义明确的内部组成关系，当前展示已有的关联实体与关系。',
+    compositionPartial: '系统组成信息尚不完整，当前仅展示已确认的组成部分。',
+    noArchitectureData: '当前系统暂无可用的架构数据。',
+    systemBoundary: '系统边界',
+    partialCompositionBadge: '部分组成',
   } },
 };
 

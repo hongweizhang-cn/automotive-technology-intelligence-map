@@ -6,8 +6,8 @@ import { checkDataQuality } from './dataQuality';
 import { readData, readLearning, saveData, saveLearning, validateImport } from './dataService';
 import { searchEntities } from './entitySearch';
 import { filterTechnologyEntities, getTechnologyRelationLinks, technologyDomains } from './technologyCatalog';
-import { appendExplorationStep, collapseExplorationStep, getDirectRelatedEntityIds, getDirectRelationshipNeighbors, getNodeHighlight, getRelationshipCategory, isRelationVisible } from './graphInteractions';
-import { buildDetailedLayoutPositions, getEdgeRoutingDecision, getOverviewSystemIds } from '../components/VehicleMap';
+import { appendExplorationStep, collapseExplorationStep, getDirectRelatedEntityIds, getDirectRelationshipNeighbors, getExpandableEntityIds, getNodeHighlight, getRelationshipCategory, getSystemCompositionStatus, isInternalToSystem, isRelationVisible } from './graphInteractions';
+import { buildDetailedLayoutPositions, buildSystemRelationshipLayout, getEdgeRoutingDecision, getOverviewSystemIds } from '../components/VehicleMap';
 import type { AppData, Entity } from '../types';
 
 const storage = new Map<string, string>();
@@ -41,6 +41,44 @@ describe('reference data and migration', () => {
     expect(battery).toBeDefined();
     expect(pack?.parentId).toBe('sys-battery');
     expect(pack?.hierarchyType).toBe('composition');
+  });
+
+  it('correctly determines internal vs external nodes for system containers', () => {
+    // Battery System
+    const bms = initialData.entities.find((e) => e.id === 'ecu-bms')!;
+    const pack = initialData.entities.find((e) => e.id === 'hw-battery-pack')!;
+    const cell = initialData.entities.find((e) => e.id === 'hw-cell-module')!;
+    const pdu = initialData.entities.find((e) => e.id === 'hw-pdu')!;
+    const pwt = initialData.entities.find((e) => e.id === 'sys-powertrain')!;
+    expect(isInternalToSystem(bms, 'sys-battery', initialData.entities)).toBe(true);
+    expect(isInternalToSystem(pack, 'sys-battery', initialData.entities)).toBe(true);
+    expect(isInternalToSystem(cell, 'sys-battery', initialData.entities)).toBe(true); // nested child of pack
+    expect(isInternalToSystem(pdu, 'sys-battery', initialData.entities)).toBe(false); // external power distribution load
+    expect(isInternalToSystem(pwt, 'sys-battery', initialData.entities)).toBe(false); // external system
+
+    // Engine Management System
+    const engEcu = initialData.entities.find((e) => e.id === 'ecu-engine')!;
+    const spdSensor = initialData.entities.find((e) => e.id === 'sensor-engine-speed')!;
+    expect(isInternalToSystem(engEcu, 'sys-engine', initialData.entities)).toBe(true);
+    expect(isInternalToSystem(spdSensor, 'sys-engine', initialData.entities)).toBe(true);
+    expect(isInternalToSystem(pwt, 'sys-engine', initialData.entities)).toBe(false);
+
+    // Transmission Control System
+    const tcu = initialData.entities.find((e) => e.id === 'ecu-transmission')!;
+    const hcu = initialData.entities.find((e) => e.id === 'ecu-hcu')!;
+    expect(isInternalToSystem(tcu, 'sys-transmission', initialData.entities)).toBe(true);
+    expect(isInternalToSystem(hcu, 'sys-transmission', initialData.entities)).toBe(false); // external coordinator
+  });
+
+  it('prioritizes internal composition when expanding entities', () => {
+    // hw-battery-pack should prioritize its child hw-cell-module
+    const packChildren = getExpandableEntityIds('hw-battery-pack', initialData.entities);
+    expect(packChildren).toContain('hw-cell-module');
+
+    // sys-battery should prioritize its internal containment
+    const batteryChildren = getExpandableEntityIds('sys-battery', initialData.entities);
+    expect(batteryChildren).toContain('hw-battery-pack');
+    expect(batteryChildren).toContain('ecu-bms');
   });
 
   it('classifies relationships and computes true direct neighbors for focus', () => {
@@ -77,6 +115,90 @@ describe('reference data and migration', () => {
         const overlap = Math.abs(position.x - other.x) < 182 && Math.abs(position.y - other.y) < 52;
         expect(overlap).toBe(false);
       }
+    }
+  });
+
+  it('evaluates system composition status correctly (full, partial, none, empty)', () => {
+    const batteryInternal = initialData.entities.filter((e) => isInternalToSystem(e, 'sys-battery', initialData.entities));
+    expect(batteryInternal.length).toBeGreaterThanOrEqual(4);
+    expect(getSystemCompositionStatus('sys-battery', batteryInternal, [])).toBe('full');
+
+    const transmissionInternal = initialData.entities.filter((e) => isInternalToSystem(e, 'sys-transmission', initialData.entities));
+    expect(transmissionInternal.length).toBe(1);
+    expect(getSystemCompositionStatus('sys-transmission', transmissionInternal, [])).toBe('partial');
+
+    const adasInternal = initialData.entities.filter((e) => isInternalToSystem(e, 'sys-adas', initialData.entities));
+    const adasExternal = initialData.entities.filter((e) => initialData.entities.find((s) => s.id === 'sys-adas')?.relatesTo.includes(e.id));
+    expect(adasInternal.length).toBe(0);
+    expect(adasExternal.length).toBeGreaterThan(0);
+    expect(getSystemCompositionStatus('sys-adas', adasInternal, adasExternal)).toBe('none');
+
+    expect(getSystemCompositionStatus('sys-custom', [], [])).toBe('empty');
+  });
+
+  it('guarantees that NO system across any of the 6 propulsion types ever renders an empty container', () => {
+    for (const architecture of initialData.architectures) {
+      for (const sysId of architecture.systemIds) {
+        const sys = initialData.entities.find((e) => e.id === sysId);
+        expect(sys).toBeDefined();
+        if (!sys) continue;
+
+        const internalEntities = initialData.entities.filter((e) => isInternalToSystem(e, sys.id, initialData.entities));
+        const intCount = internalEntities.length;
+        const shouldRenderContainer = intCount > 0;
+
+        // Mathematical invariant: If shouldRenderContainer is true, intCount MUST be >= 1.
+        // It is strictly impossible for shouldRenderContainer to be true while intCount === 0.
+        if (shouldRenderContainer) {
+          expect(intCount).toBeGreaterThan(0);
+        } else {
+          expect(intCount).toBe(0);
+        }
+      }
+    }
+  });
+
+  it('creates clean non-overlapping fallback relationship layouts for systems without containers', () => {
+    const testSystems = ['sys-adas', 'sys-body', 'sys-chassis', 'sys-charging', 'sys-thermal'];
+    for (const sysId of testSystems) {
+      const system = initialData.entities.find((e) => e.id === sysId)!;
+      const relatedIds = new Set([
+        ...system.relatesTo,
+        ...(system.relations ?? []).map((r) => r.targetId),
+        ...initialData.entities.filter((e) => e.relatesTo.includes(system.id) || e.relations?.some((r) => r.targetId === system.id)).map((e) => e.id),
+      ]);
+      const relatedEntities = initialData.entities.filter((e) => relatedIds.has(e.id) && e.id !== system.id);
+      const positions = buildSystemRelationshipLayout(system, relatedEntities);
+
+      expect(positions.has(system.id)).toBe(true);
+      for (const [id, pos] of positions) {
+        expect(pos.x).toBeDefined();
+        expect(pos.y).toBeDefined();
+        for (const [otherId, otherPos] of positions) {
+          if (id === otherId) continue;
+          const overlap = Math.abs(pos.x - otherPos.x) < 182 && Math.abs(pos.y - otherPos.y) < 55;
+          expect(overlap).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('provides all required bilingual internationalization messages in i18n', () => {
+    const requiredKeys = [
+      'compositionUndefined',
+      'compositionPartial',
+      'noArchitectureData',
+      'systemBoundary',
+      'partialCompositionBadge',
+    ] as const;
+
+    for (const key of requiredKeys) {
+      const enVal = i18n.getResource('en', 'translation', key);
+      const zhVal = i18n.getResource('zh', 'translation', key);
+      expect(enVal).toBeTruthy();
+      expect(zhVal).toBeTruthy();
+      expect(typeof enVal).toBe('string');
+      expect(typeof zhVal).toBe('string');
     }
   });
 

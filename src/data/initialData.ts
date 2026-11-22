@@ -322,7 +322,7 @@ for (const [id, zh, en, type, dz, de] of companies) {
 
 setRelations('sys-battery', [
   relation('hw-battery-pack', 'contains', '包含动力电池包；内部构型依设计而异。', 'Contains the traction battery pack; internal configuration varies by design.'),
-  relation('ecu-bms', 'integrates', '包括电池状态监测与保护功能，控制器集成边界依设计而异。', 'Includes battery-state monitoring and protection functions; controller integration varies by design.'),
+  relation('ecu-bms', 'contains', '包含电池管理系统（BMS）控制功能；控制器集成边界依设计而异。', 'Contains battery management system (BMS) control function; controller integration varies by design.'),
   relation('hw-bdu', 'contains', '包含电池断路与预充相关硬件，集成方式依设计而异。', 'Contains battery disconnect and pre-charge related hardware; integration varies by design.'),
   relation('hw-pdu', 'distributes_power_to', '向高压负载配电；与断路单元的边界依设计而异。', 'Distributes power to HV loads; boundary with the disconnect unit varies by design.'),
   ...['sensor-cell-voltage', 'sensor-battery-current', 'sensor-battery-temperature', 'sensor-insulation'].map((id) => relation(id, 'contains', '包含相应测量/监测功能；实现可能集成。', 'Includes the corresponding sensing/monitoring function; implementation may be integrated.')),
@@ -354,7 +354,7 @@ setRelations('hw-bdu', [
   relation('hw-hv-fuse', 'integrates', '保护元件可集成于断路单元或布置在其他位置。', 'Protection may be integrated into the disconnect unit or located elsewhere.'),
 ]);
 setRelations('sys-engine', [
-  relation('ecu-engine', 'controls', '由发动机控制单元执行发动机控制功能。', 'Engine control functions are performed by an engine control unit.'),
+  relation('ecu-engine', 'contains', '包含发动机控制单元（ECU）；管理内燃机喷射、点火和运行状态。', 'Contains the engine control unit; manages combustion, ignition, and engine operation.'),
   relation('sensor-engine-speed', 'contains', '包含适用的发动机转速/位置测量功能。', 'Includes applicable engine speed/position sensing.'),
   relation('sensor-engine-temperature', 'contains', '包含适用的发动机温度测量功能。', 'Includes applicable engine temperature sensing.'),
   relation('actuator-fuel-injector', 'contains', '包含燃油计量与喷射执行功能。', 'Includes fuel metering and injection actuation.'),
@@ -387,6 +387,10 @@ setRelations('ecu-fuel-cell', [
 ]);
 setRelations('sys-hybrid-control', [
   relation('ecu-hcu', 'controls', '混合动力控制功能的逻辑边界，可能集成于其他控制器。', 'Logical boundary for hybrid control; may be integrated into another controller.'),
+]);
+setRelations('sys-transmission', [
+  relation('ecu-transmission', 'contains', '包含变速器控制单元（TCU）；具体集成形式依车型设计而异。', 'Contains the transmission control unit; physical integration varies by vehicle design.'),
+  relation('ecu-hcu', 'communicates_with', '与混合动力控制单元协调传动模式与扭矩。', 'Coordinates transmission modes and torque with the hybrid control unit.'),
 ]);
 
 for (const entity of entities) {
